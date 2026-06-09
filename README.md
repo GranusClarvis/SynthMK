@@ -46,7 +46,8 @@ as a normal service — without Robot Framework or a paid tier — that's SynthM
 - `lab/` - one-command **self-hosted Checkmk Raw + runner + internal demo site**
   for full LAN end-to-end testing (`docs/lan-quickstart.md`).
 - `docs/` - architecture, GOAT reference audit, flow schema, home-lab/demo,
-  LAN quick start, product roadmap.
+  LAN quick start, product roadmap, and **`docs/STATUS.md`** (status, test
+  evidence, open work, and the **security review**).
 
 ## Quick start
 

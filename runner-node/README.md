@@ -66,6 +66,20 @@ link only renders if **Setup → … → "Escape HTML codes in service output"**
 escaping broadly is an XSS surface (Werk #6058). SynthMK output is always a
 single sanitized line containing only the link it generated.
 
+## Security (read before exposing beyond a trusted LAN)
+
+The appliance defaults favor home-lab simplicity. Before any wider exposure, see
+the full review in [`../docs/STATUS.md`](../docs/STATUS.md) §5. The must-fix set:
+
+- **Screenshots can capture secrets/PII** (a failed *login* flow screenshots a
+  page whose DOM may hold the typed password). Disable `screenshot_on_failure`
+  for credential flows.
+- **The screenshot server (`:9180`) and agent transport (`:6556`) are
+  unauthenticated and unencrypted.** Firewall both to the Checkmk server only;
+  the screenshot dir is otherwise world-readable to anyone who can reach the node.
+- **Secrets are env-backed only** (no vault); container runs **root + Chromium
+  `--no-sandbox`** — only point flows at trusted internal sites.
+
 ## Production hardening: the real Checkmk agent
 
 The bundled socat transport is dependency-free and version-agnostic, ideal for
