@@ -1,0 +1,19 @@
+# Failing flow: same demo page, but asserts text that does not exist.
+# Demonstrates a clear CRIT failure message and screenshot-on-failure metadata:
+#   2 "Synthetic Dashboard Check" duration=NNNms;3000;7000 CRIT - Expected text 'Dashboard' not found
+name: Synthetic Dashboard Check
+start_url: "{{ SYNTHMK_DEMO_URL }}"
+timeout_ms: 30000
+warn_ms: 3000
+crit_ms: 7000
+browser: chrome
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: "{{ SYNTHMK_DEMO_URL }}"
+  - action: check_title
+    contains: SynthMK Demo
+  # This page renders "Welcome to SynthMK", never the literal word "Dashboard",
+  # so this assertion fails with a clear message and the flow ends CRIT.
+  - action: check_visible_text
+    text: Dashboard

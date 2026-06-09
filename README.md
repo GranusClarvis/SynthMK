@@ -14,11 +14,26 @@ Playwright or Selenium code for common checks.
 
 ## MVP Components
 
-- `flows/` - readable flow examples.
-- `runner/` - synthetic runner that executes flows and returns Checkmk output.
-- `checkmk/` - Checkmk local-check/addon skeleton.
-- `extension/` - Chrome recorder MVP.
-- `docs/` - architecture, GOAT reference audit, product roadmap, examples.
+- `flows/` - readable YAML flow examples (`example-ok.yaml`, `example-fail.yaml`)
+  plus a bundled local `demo/` page so the runner has a stable, login-free target.
+- `runner/` - Playwright-based synthetic runner (`runner.py`) emitting Checkmk
+  local-check output, a browser-free contract test (`test_contract.py`), and a
+  smoke script (`smoke_test.sh`).
+- `checkmk/` - Checkmk local-check/addon skeleton (`synthmk_check.sh` + README).
+- `extension/` - Chrome recorder placeholder (deferred; see `extension/README.md`).
+- `docs/` - GOAT reference audit, flow schema, home-lab/demo, product roadmap.
+
+## Quick start
+
+```bash
+pip install playwright pyyaml && python3 -m playwright install chromium
+python3 runner/test_contract.py          # validate output contract (no browser)
+export SYNTHMK_DEMO_URL="file://$PWD/flows/demo/index.html"
+python3 runner/runner.py flows/example-ok.yaml    # -> 0 "..." OK - ...
+python3 runner/runner.py flows/example-fail.yaml  # -> 2 "..." CRIT - Expected text 'Dashboard' not found
+```
+
+See [`docs/home-lab.md`](docs/home-lab.md) for the full Checkmk wiring walkthrough.
 
 ## Reference
 

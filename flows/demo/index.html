@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>SynthMK Demo App</title>
+</head>
+<body>
+  <h1>Welcome to SynthMK</h1>
+  <p>This is a local demo page used by the SynthMK example flows so the runner
+     has a stable target with no live-login dependency.</p>
+
+  <form id="login">
+    <input id="username" name="username" placeholder="username" />
+    <input id="password" name="password" type="password" placeholder="password" />
+    <button id="submit" type="button" onclick="showPanel()">Sign in</button>
+  </form>
+
+  <div id="panel" data-testid="dashboard" style="display:none">
+    <h2>Account Overview</h2>
+    <p>Signed in successfully.</p>
+  </div>
+
+  <script>
+    function showPanel() {
+      document.getElementById('panel').style.display = 'block';
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+# Passing flow: open the local demo page, sign in, assert the dashboard appears.
+# The demo page is served via {{ SYNTHMK_DEMO_URL }} so the flow stays portable
+# (the smoke script sets it to a file:// URL for flows/demo/index.html).
+name: Synthetic Example Check
+start_url: "{{ SYNTHMK_DEMO_URL }}"
+timeout_ms: 30000
+warn_ms: 3000
+crit_ms: 7000
+browser: chrome
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: "{{ SYNTHMK_DEMO_URL }}"
+  - action: check_title
+    contains: SynthMK Demo
+  - action: check_visible_text
+    text: Welcome to SynthMK
+  - action: fill
+    selector: "#username"
+    value: "{{ DEMO_USER }}"
+  - action: fill
+    selector: "#password"
+    value: "{{ DEMO_PASS }}"
+  - action: click
+    selector: "#submit"
+  - action: wait_for_element
+    selector: "[data-testid='dashboard']"
+    timeout_ms: 5000
+  - action: check_visible_text
+    text: Account Overview
