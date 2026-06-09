@@ -58,10 +58,15 @@ fi
 # 2. flow scheduler (worker pool; see runner-node/scheduler.py)
 "${RUNAS[@]}" python3 "$SYNTHMK_HOME/runner-node/scheduler.py" &
 
+# 3. management dashboard (token-protected; SYNTHMK_ADMIN=off to disable)
+if [[ "${SYNTHMK_ADMIN:-on}" != "off" ]]; then
+  "${RUNAS[@]}" python3 "$SYNTHMK_HOME/runner-node/admin_server.py" &
+fi
+
 # Reap children cleanly on stop.
 trap 'kill $(jobs -p) 2>/dev/null' TERM INT
 
-# 3. agent transport in the foreground (the container's main process).
+# 4. agent transport in the foreground (the container's main process).
 if [[ "$AGENT_MODE" == "official" ]]; then
   # Production: version-matched official Checkmk agent + TLS controller.
   # Requires a one-time `register_agent.sh` run (downloads the agent from your

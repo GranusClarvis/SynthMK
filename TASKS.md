@@ -79,7 +79,20 @@ Source of truth for autonomous scheduling is Clarvis
 - [x] `[SYNTHMK_REAL_FLOWS]` Wikipedia (live-verified), Google template
       (bot-block documented), lab login→dashboard journey E2E through Checkmk.
 
-### Open (v0.4 candidates — see docs/competitive-landscape.md roadmap)
+## v0.4.0 — native plugin, node dashboard, multi-browser recorder, website
+
+- [x] `[SYNTHMK_NATIVE_PLUGIN]` [VERIFIED] JSON `<<<synthmk>>>` section + agent-based
+      v2 check plugin + rulesets v1 (Setup GUI thresholds, live-verified override)
+      + graphing v1 (duration metric/graph/perf-o-meter). → `checkmk/plugin/`.
+- [x] `[SYNTHMK_NODE_DASHBOARD]` [VERIFIED] token+CSRF web UI on :9181 — live check
+      table, run-now, lint-gated flow editor. → `runner-node/admin_server.py`.
+- [x] `[SYNTHMK_BROWSER_PACKAGES]` Chrome/Edge + Firefox builds with icons.
+      → `extension/build.sh`, `manifest.firefox.json`.
+- [x] `[SYNTHMK_SHOT_URL_LAN]` lab screenshot links default to the host LAN IP.
+- [x] `[SYNTHMK_WEBSITE]` SynthMK-Web repo, GitHub Pages, real lab screenshots.
+- [x] `[SYNTHMK_RELEASES]` v0.3.0 + v0.4.0 tagged and released with assets.
+
+### Open (v0.5 candidates — see docs/competitive-landscape.md roadmap)
 
 - [ ] `[SYNTHMK_MULTINODE_SPECIAL_AGENT]` special agent pulling several runner
       nodes ("locations") from the Checkmk side.

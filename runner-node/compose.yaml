@@ -16,7 +16,7 @@ name: synthmk-node
 
 services:
   synthmk-runner:
-    image: synthmk-runner:0.3.0
+    image: synthmk-runner:0.4.0
     # Or build from a checkout:
     # build: { context: .., dockerfile: runner-node/Dockerfile }
     container_name: synthmk-runner
@@ -31,6 +31,9 @@ services:
       - SYNTHMK_SECRETS_FILE=/run/synthmk/secrets.yaml
       # Production transport after register_agent.sh: flip to "official".
       - SYNTHMK_AGENT_MODE=socat
+      # Management dashboard (:9181). Unset = auto-generated token printed
+      # once to the container log; SYNTHMK_ADMIN=off disables the dashboard.
+      # - SYNTHMK_ADMIN_TOKEN=change-me
     volumes:
       - ./flows:/opt/synthmk/flows:ro                          # EDIT: your flow files
       - ./flows.conf:/opt/synthmk/runner-node/flows.conf:ro    # EDIT: your schedule
@@ -40,6 +43,7 @@ services:
     ports:
       - "6556:6556"     # agent transport (firewall: Checkmk server only)
       - "9180:9180"     # screenshots (token-auth; firewall: operator LAN)
+      - "9181:9181"     # management dashboard (token sign-in; operator LAN)
     security_opt:
       - no-new-privileges:true
     # Headless Chromium under --disable-dev-shm-usage still benefits from

@@ -44,6 +44,6 @@ RUN chmod +x ${SYNTHMK_HOME}/runner-node/*.sh ${SYNTHMK_HOME}/checkmk/*.sh \
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD curl -fsS "http://localhost:${SYNTHMK_SHOT_PORT:-9180}/healthz" || exit 1
 
-EXPOSE 6556 9180
+EXPOSE 6556 9180 9181
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["bash", "/opt/synthmk/runner-node/entrypoint.sh"]

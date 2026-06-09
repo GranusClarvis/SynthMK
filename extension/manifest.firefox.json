@@ -3,6 +3,12 @@
   "name": "SynthMK Recorder",
   "version": "0.4.0",
   "description": "Record browser journeys (clicks, fills, assertions) and export SynthMK YAML synthetic checks for Checkmk. Passwords are exported as secret references — never recorded.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "recorder@synthmk.dev",
+      "strict_min_version": "121.0"
+    }
+  },
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
@@ -28,7 +34,7 @@
     }
   },
   "background": {
-    "service_worker": "background.js"
+    "scripts": ["background.js"]
   },
   "content_scripts": [
     {

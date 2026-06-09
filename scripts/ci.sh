@@ -68,6 +68,19 @@ for f in "${TRACKED[@]}"; do
   fi
 done
 
+# --- 2b. python syntax ------------------------------------------------------
+# The Checkmk-side plugin files import cmk.* (only available on a site), so
+# they can't be unit-run here — but they must always at least parse.
+section "python syntax (ast.parse on tracked *.py)"
+for f in "${TRACKED[@]}"; do
+  [[ "$f" == *.py ]] || continue
+  if $PY -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$f" 2>/tmp/synthmk_ci_py.log; then
+    ok "$f"
+  else
+    bad "python syntax $f"; sed 's/^/    /' /tmp/synthmk_ci_py.log
+  fi
+done
+
 # --- 3. js syntax ----------------------------------------------------------
 section "js syntax (node --check)"
 if command -v "$NODE" >/dev/null 2>&1; then

@@ -1,5 +1,7 @@
 # SynthMK
 
+**Website & docs: https://granusclarvis.github.io/SynthMK-Web/ · Downloads: [GitHub Releases](https://github.com/GranusClarvis/SynthMK/releases)**
+
 Checkmk synthetic monitoring addon for browser-recorded website flows.
 
 SynthMK's first target is deliberately small:
@@ -27,7 +29,9 @@ SynthMK aims at the gap underneath it:
 | Edition | enterprise / commercial | works on **Raw/CRE (free)** |
 | Integration | deep (bakery, dedicated services) | agent **local check** (drop-in) |
 | Credentials | secret env vars (plaintext in agent config) | node-local 0600 secrets file, `{{ secret.NAME }}`, output-redacted |
-| Footprint | a platform | one script + one container |
+| Integration depth | bakery + dedicated services | **native check plugin**: Setup ruleset, unit-aware graphs, perf-o-meter, per-step metrics |
+| Check management | bakery rules + .robot redeploys | **web dashboard** on the node: live states, run-now, lint-gated editor |
+| Footprint | a platform | one container + one MKP + one extension |
 
 If you run **Checkmk Raw** and want *"is my login flow still working?"* as a
 normal service — without Robot Framework or a paid tier — that's SynthMK.

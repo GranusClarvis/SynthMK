@@ -37,6 +37,12 @@ JSON
 cp "$REPO/checkmk/synthmk_check.sh" "$STAGE/local/lib/check_mk_agent/local/300/synthmk_check.sh"
 chmod +x "$STAGE/local/lib/check_mk_agent/local/300/synthmk_check.sh"
 
+# Native check plugin family at its server-side install path (agent_based v2
+# check + rulesets + graphing; see checkmk/plugin/).
+mkdir -p "$STAGE/local/lib/python3/cmk_addons/plugins/synthmk"
+rsync -a --exclude='__pycache__' --exclude='*.pyc' \
+      "$REPO/checkmk/plugin/" "$STAGE/local/lib/python3/cmk_addons/plugins/synthmk/"
+
 # Runtime payload the local-check invokes (SYNTHMK_HOME points here).
 for part in runner flows checkmk docs README.md VERSION; do
   src="$REPO/$part"

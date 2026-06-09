@@ -1,7 +1,31 @@
 # SynthMK — Status, Test Evidence, Open Work & Security
 
-**As of:** 2026-06-09 · **Version:** 0.3.0 · **Branch:** `main`
-**Repo:** `git@github.com:GranusClarvis/SynthMK.git` (standalone)
+**As of:** 2026-06-09 · **Version:** 0.4.0 · **Branch:** `main`
+**Repo:** `git@github.com:GranusClarvis/SynthMK.git` ·
+**Website:** https://granusclarvis.github.io/SynthMK-Web/
+
+## 0. What was done in v0.4.0 (native plugin, dashboard, browsers, website)
+
+- **Native Checkmk plugin** (agent-based v2 + rulesets v1 + graphing v1, in the
+  MKP): JSON `<<<synthmk>>>` section → real services with unit-aware duration
+  metric (s) incl. warn/crit bands, per-step metrics, perf-o-meter, step
+  breakdown + screenshot link in details. **Verified live**: `cmk -nvp` shows
+  `synthmk_duration=0.239;4;10`; a Setup rule (REST-created) overrode flow
+  thresholds and flipped the service CRIT; ruleset visible as
+  "SynthMK synthetic browser checks"; MKP 0.4.0 (17 files) enabled on the site.
+- **Node management dashboard** (:9181, token + CSRF): live check table from
+  the spool, run-now (verified: trigger → scheduler immediate run), flow editor
+  that lints before saving (verified: bad action rejected with linter message,
+  valid flow saved + auto-scheduled). Auth verified: 401 without/with wrong
+  token, 401 on POST without the CSRF header.
+- **Recorder packages** for Chrome/Edge + Firefox with icons (`extension/build.sh`);
+  real-browser E2E re-verified after the manifest changes.
+- **Screenshot links LAN fix**: `make lab-up` defaults the base URL to the
+  host's LAN IP — links in Checkmk now work from other machines.
+- **Website**: SynthMK-Web repo on GitHub Pages, real lab screenshots.
+- v0.3.0 tagged + released on GitHub with MKP + extension assets.
+
+Below sections describe v0.3.0's foundation (all still true).
 
 This is the living "where things stand" doc. Roadmap tags below mirror the Clarvis
 evolution queue (`PROJECT:SYNTHMK`) and the repo `TASKS.md`.

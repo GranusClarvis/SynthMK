@@ -107,6 +107,34 @@ class FlowResult:
             return f' <a href="{url}">screenshot</a>'
         return f" (screenshot: {self.screenshot})"
 
+    def to_json(self) -> str:
+        """Machine-readable result for the native <<<synthmk>>> agent section.
+
+        The native Checkmk check plugin (checkmk/plugin/) consumes this and
+        renders proper services with unit-aware metrics, rulesets, and graphs —
+        richer than the local-check line. All text passes the same redaction.
+        """
+        import json
+        shot_url = None
+        if self.screenshot and self.shot_base_url:
+            name = os.path.basename(self.screenshot)
+            shot_url = f"{self.shot_base_url.rstrip('/')}/{name}"
+            token = _shot_token(name)
+            if token:
+                shot_url += f"?t={token}"
+        return json.dumps({
+            "service": self.service,
+            "status": self.status,
+            "duration_ms": self.duration_ms,
+            "warn_ms": self.warn_ms,
+            "crit_ms": self.crit_ms,
+            "summary": _oneline(self.summary),
+            "failed_step": self.step_index,
+            "steps": [{"label": label, "ms": ms} for label, ms in (self.step_timings or [])],
+            "screenshot_url": shot_url,
+            "dynamic": self.dynamic,
+        }, sort_keys=True)
+
     def checkmk_line(self) -> str:
         extra = self._screenshot_suffix()
         # Dynamic mode on a passing flow: hand state determination to Checkmk via
@@ -395,6 +423,11 @@ def main(argv: list[str] | None = None) -> int:
         help="YAML secrets file for {{ secret.NAME }} references "
              "(default: $SYNTHMK_SECRETS_FILE; must be chmod 600).",
     )
+    parser.add_argument(
+        "--json", action="store_true",
+        help="Emit a JSON result (native <<<synthmk>>> section format) "
+             "instead of a Checkmk local-check line.",
+    )
     args = parser.parse_args(argv)
     dynamic = True if args.p_state else None  # None => honor flow state_mode
 
@@ -405,16 +438,18 @@ def main(argv: list[str] | None = None) -> int:
             secrets_file=args.secrets_file,
         )
     except FlowError as fe:
-        # Schema / load failure → emit an UNKNOWN Checkmk line, not a traceback.
-        service = args.flow.stem
-        print(f'{fe.status} "{service}" duration=0ms;; {STATE_NAME[fe.status]} - {_oneline(str(fe))}')
+        # Schema / load failure → emit an UNKNOWN result, not a traceback.
+        fallback = FlowResult(service=args.flow.stem, status=fe.status,
+                              summary=str(fe))
+        print(fallback.to_json() if args.json else fallback.checkmk_line())
         return fe.status
     except Exception as exc:  # pragma: no cover - runner-internal failure
-        service = args.flow.stem
-        print(f'3 "{service}" duration=0ms;; UNKNOWN - Runner error: {_oneline(str(exc))}')
+        fallback = FlowResult(service=args.flow.stem, status=UNKNOWN,
+                              summary=f"Runner error: {exc}")
+        print(fallback.to_json() if args.json else fallback.checkmk_line())
         return UNKNOWN
 
-    print(result.checkmk_line())
+    print(result.to_json() if args.json else result.checkmk_line())
     return result.status
 
 

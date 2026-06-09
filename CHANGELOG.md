@@ -4,6 +4,51 @@ All notable changes to SynthMK are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); SynthMK uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] — native Checkmk plugin, node dashboard, multi-browser recorder, website
+
+The "real product" release: SynthMK is now a genuine Checkmk plugin with
+settings in the Setup GUI and first-class graphs, the runner node grew a
+management dashboard, the recorder ships for Chrome, Edge and Firefox, and
+the project has a website: https://granusclarvis.github.io/SynthMK-Web/
+
+### Added
+- **Native Checkmk check plugin** (`checkmk/plugin/`, ships in the MKP):
+  the runner node emits a JSON `<<<synthmk:sep(0)>>>` section (runner
+  `--json`); an agent-based v2 plugin renders every journey as a first-class
+  service — unit-aware duration metric in seconds with warn/crit bands,
+  per-step metrics, step breakdown + screenshot link in the details, and a
+  human summary ("Journey duration: 239 milliseconds"). Verified live: rule
+  override flipped a service CRIT from the GUI.
+- **Setup ruleset** ("SynthMK synthetic browser checks", rulesets v1):
+  override journey duration thresholds per service/host/folder from Checkmk —
+  no flow-file edit, no node access.
+- **Graphing definitions** (graphing v1): registered duration metric, named
+  graph, perf-o-meter on every service row.
+- **Node management dashboard** (`runner-node/admin_server.py`, :9181):
+  token sign-in (CSRF-guarded, constant-time compares), live check table
+  (state badges, per-step timings, schedule, last-run age, screenshot links),
+  one-click run-now, and a flow editor that lints before every save —
+  invalid YAML is rejected with the linter's messages. Degrades to view-only
+  on read-only flow mounts. `SYNTHMK_ADMIN=off` disables it.
+- **Run-now triggers**: the scheduler watches a trigger directory; the
+  dashboard queues immediate runs without restarts.
+- **Multi-browser recorder packages** (`extension/build.sh`): icons, Chrome +
+  Edge package and a Firefox MV3 variant (gecko event page), built to
+  `dist/synthmk-recorder-{chrome,firefox}-<version>.zip`.
+- **Website** (separate repo SynthMK-Web, GitHub Pages): landing with real
+  lab screenshots, vs-Robotmk comparison, quickstart, downloads, full docs.
+- CI: python-syntax gate for all tracked `.py` (the site-side plugin must
+  always parse); MKP payload contract covers the plugin family files.
+
+### Changed
+- `SYNTHMK_OUTPUT=native` is the node default (the MKP ships the plugin);
+  `SYNTHMK_OUTPUT=local` keeps the v0.3 `<<<local>>>` lines for sites
+  without it. Re-run service discovery after upgrading.
+- `make lab-up` defaults the screenshot base URL to the host's LAN IP, so
+  links in Checkmk work from other machines (was: localhost).
+- Lab compose publishes the dashboard (:9181) and mounts flows writable so
+  the editor can be demonstrated; extension manifest carries icons + 0.4.0.
+
 ## [0.3.0] — enterprise hardening: secrets, scale, TLS, recorder UX
 
 The "trust it with production checks" release: secure credentials end to end,

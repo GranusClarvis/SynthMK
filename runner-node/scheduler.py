@@ -52,6 +52,13 @@ MAX_CONCURRENCY = int(os.environ.get("SYNTHMK_MAX_CONCURRENCY", "4"))
 # the whole subprocess (browser launch hangs, zombie Chromium, ...).
 RUN_TIMEOUT_S = int(os.environ.get("SYNTHMK_RUN_TIMEOUT_S", "180"))
 SCHED_SERVICE = os.environ.get("SYNTHMK_SCHED_SERVICE", "SynthMK Scheduler")
+# "native" (default) -> JSON <<<synthmk>>> section for the native check plugin
+# (rich metrics, rulesets, graphs; ships in the MKP). "local" -> the v0.2/v0.3
+# <<<local>>> line format for sites without the plugin installed.
+OUTPUT = os.environ.get("SYNTHMK_OUTPUT", "native").lower()
+# Run-now triggers from the management dashboard (admin_server.py): a file
+# named like the flow file dropped here schedules an immediate run.
+RUN_NOW_DIR = Path(os.environ.get("SYNTHMK_RUN_NOW_DIR", "/tmp/synthmk-run-now"))
 
 os.environ.setdefault("SYNTHMK_NO_SANDBOX", "1")  # Chromium-in-Docker default
 
@@ -108,9 +115,28 @@ def parse_conf(conf: Path) -> list[Flow]:
 
 def wrap_sections(payload: str, host: str) -> str:
     """Spool/piggyback section wrapping (mirrors checkmk/piggyback_wrap.sh)."""
+    header = "<<<synthmk:sep(0)>>>" if OUTPUT == "native" else "<<<local>>>"
     if host:
-        return f"<<<<{host}>>>>\n<<<local>>>\n{payload}\n<<<<>>>>\n"
-    return f"<<<local>>>\n{payload}\n"
+        return f"<<<<{host}>>>>\n{header}\n{payload}\n<<<<>>>>\n"
+    return f"{header}\n{payload}\n"
+
+
+def synthetic_line(service: str, status: int, summary: str,
+                   metrics: dict | None = None) -> str:
+    """A scheduler-generated result (warmup, missing flow, health) in the
+    currently selected output format."""
+    if OUTPUT == "native":
+        import json
+        entry = {"service": service, "status": status, "duration_ms": 0,
+                 "warn_ms": None, "crit_ms": None, "summary": summary,
+                 "failed_step": None, "steps": [], "screenshot_url": None,
+                 "dynamic": False}
+        if metrics:
+            entry["metrics"] = metrics
+        return json.dumps(entry, sort_keys=True)
+    state_name = {0: "OK", 1: "WARN", 2: "CRIT", 3: "UNKNOWN"}[status]
+    perf = "|".join(f"{k}={v}" for k, v in (metrics or {}).items()) or "-"
+    return f'{status} "{service}" {perf} {state_name} - {summary}'
 
 
 def publish(dest_name: str, payload: str, host: str = "") -> None:
@@ -138,12 +164,12 @@ def emit_warmup(flow: Flow) -> None:
     before the first browser run completes still captures the right service."""
     if not flow.path.is_file():
         publish(f"{flow.maxage}_synthmk_{flow.id}",
-                f'3 "SynthMK {flow.file}" duration=0ms;; UNKNOWN - flow file not found',
+                synthetic_line(f"SynthMK {flow.file}", 3, "flow file not found"),
                 flow.host)
         return
     name = flow_service_name(flow)
     publish(f"{flow.maxage}_synthmk_{flow.id}",
-            f'0 "{name}" duration=0ms;; OK - warming up, first result pending',
+            synthetic_line(name, 0, "warming up, first result pending"),
             flow.host)
 
 
@@ -151,21 +177,25 @@ def run_flow(flow: Flow) -> None:
     start = time.monotonic()
     try:
         if not flow.path.is_file():
-            payload = f'3 "SynthMK {flow.file}" duration=0ms;; UNKNOWN - flow file not found'
+            payload = synthetic_line(f"SynthMK {flow.file}", 3, "flow file not found")
         else:
+            cmd = [PYTHON, str(HOME / "runner" / "runner.py"), str(flow.path)]
+            if OUTPUT == "native":
+                cmd.append("--json")
             try:
                 proc = subprocess.run(
-                    [PYTHON, str(HOME / "runner" / "runner.py"), str(flow.path)],
-                    capture_output=True, text=True, timeout=RUN_TIMEOUT_S,
+                    cmd, capture_output=True, text=True, timeout=RUN_TIMEOUT_S,
                 )
                 payload = proc.stdout.strip()
                 if not payload:
                     err = " ".join(proc.stderr.split())[:160]
-                    payload = (f'3 "SynthMK {flow.file}" duration=0ms;; '
-                               f'UNKNOWN - runner produced no output ({err or "no stderr"})')
+                    payload = synthetic_line(
+                        f"SynthMK {flow.file}", 3,
+                        f'runner produced no output ({err or "no stderr"})')
             except subprocess.TimeoutExpired:
-                payload = (f'3 "{flow_service_name(flow)}" duration={RUN_TIMEOUT_S * 1000}ms;; '
-                           f'UNKNOWN - runner killed after {RUN_TIMEOUT_S}s hard timeout')
+                payload = synthetic_line(
+                    flow_service_name(flow), 3,
+                    f"runner killed after {RUN_TIMEOUT_S}s hard timeout")
         publish(f"{flow.maxage}_synthmk_{flow.id}", payload, flow.host)
     except Exception as exc:  # never let a worker die silently
         log(f"worker error for {flow.file}: {exc}")
@@ -183,19 +213,25 @@ def emit_scheduler_health(flows: list[Flow], pool: "Pool", now: float) -> None:
     slowest = max((f.last_duration for f in flows), default=0.0)
     # Oversubscription = flows can't run on schedule: that's a node-sizing
     # problem and must alert on the NODE, not as fake CRITs on monitored apps.
-    state, verdict = 0, "OK"
+    state = 0
     detail = "pool healthy"
     if overdue:
-        state, verdict = 1, "WARN"
+        state = 1
         names = ", ".join(f.file for f in overdue[:3])
         detail = (f"{len(overdue)} flow(s) overdue ({names}…) — raise "
                   f"SYNTHMK_MAX_CONCURRENCY or intervals")
-    perf = (f"flows={len(flows)}|active={pool.active()}|overdue={len(overdue)}"
-            f"|runs={total_runs}c|overlap_skips={total_skips}c"
-            f"|slowest_run={slowest:.1f}s")
     publish("120_synthmk_scheduler",
-            f'{state} "{SCHED_SERVICE}" {perf} {verdict} - {detail} '
-            f'(concurrency {pool.active()}/{MAX_CONCURRENCY})')
+            synthetic_line(
+                SCHED_SERVICE, state,
+                f"{detail} (concurrency {pool.active()}/{MAX_CONCURRENCY})",
+                metrics={
+                    "flows": len(flows),
+                    "active": pool.active(),
+                    "overdue": len(overdue),
+                    "runs": total_runs,
+                    "overlap_skips": total_skips,
+                    "slowest_run": round(slowest, 2),
+                }))
 
 
 class Pool:
@@ -281,6 +317,18 @@ def main() -> int:
                 log(f"flows.conf reloaded: {len(flows)} flow(s)")
         except Exception as exc:
             log(f"config reload error: {exc}")
+
+        # Run-now triggers from the dashboard: pull the flow's next_run in.
+        try:
+            if RUN_NOW_DIR.is_dir():
+                for trig in RUN_NOW_DIR.iterdir():
+                    for flow in flows:
+                        if flow.file == trig.name:
+                            flow.next_run = 0.0
+                            log(f"run-now trigger for {flow.file}")
+                    trig.unlink(missing_ok=True)
+        except Exception as exc:
+            log(f"run-now scan error: {exc}")
 
         now = time.time()
         for flow in flows:

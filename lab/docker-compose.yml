@@ -37,7 +37,7 @@ services:
     build:
       context: ..                       # repo root
       dockerfile: runner-node/Dockerfile
-    image: synthmk-runner:0.3.0
+    image: synthmk-runner:0.4.0
     container_name: synthmk-runner
     hostname: synthmk-runner
     environment:
@@ -50,12 +50,18 @@ services:
       # Secrets for {{ secret.* }} references (the login flow uses them).
       - SYNTHMK_SECRETS_FILE=/run/synthmk/secrets.yaml
       - SYNTHMK_MAX_CONCURRENCY=4
+      # Management dashboard sign-in (lab value; production auto-generates a
+      # random token when unset — see runner-node/admin_server.py).
+      - SYNTHMK_ADMIN_TOKEN=${SYNTHMK_ADMIN_TOKEN:-synthmk-lab-admin}
     volumes:
-      - ./flows:/opt/synthmk/flows:ro                              # lab flows
-      - ./flows.conf:/opt/synthmk/runner-node/flows.conf:ro        # lab schedule
+      # rw in the lab so the dashboard's flow editor can be demonstrated;
+      # mount :ro for a view-only dashboard.
+      - ./flows:/opt/synthmk/flows
+      - ./flows.conf:/opt/synthmk/runner-node/flows.conf
       - ./secrets.yaml:/run/synthmk/secrets.yaml:ro                # lab secrets (chmod 600)
     ports:
       - "9180:9180"      # screenshots (clickable from your browser)
+      - "9181:9181"      # management dashboard (token sign-in)
     # 6556 is intentionally NOT published — Checkmk reaches it over labnet by name.
     security_opt:
       - no-new-privileges:true

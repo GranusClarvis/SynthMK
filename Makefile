@@ -67,8 +67,12 @@ real-mkp:
 runner-image:
 	docker build -f runner-node/Dockerfile -t synthmk-runner:$(shell cat VERSION) .
 
+# Screenshot links must be clickable from OTHER machines on the LAN, so the
+# default base URL is this host's primary IP (override with
+# SYNTHMK_SHOT_BASE_URL=http://name:9180 make lab-up).
 lab-up:
-	cd lab && docker compose up -d --build
+	cd lab && SYNTHMK_SHOT_BASE_URL="$${SYNTHMK_SHOT_BASE_URL:-http://$$(hostname -I | awk '{print $$1}'):9180}" \
+		docker compose up -d --build
 
 lab-down:
 	cd lab && docker compose down -v

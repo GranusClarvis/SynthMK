@@ -52,6 +52,14 @@ docker cp "$REPO/runner/." "$CMK_CONTAINER:$BASE/runner/"
 docker cp "$REPO/flows/."  "$CMK_CONTAINER:$BASE/flows/"
 docker exec "$CMK_CONTAINER" bash -c "chmod +x '$BASE/lib/local/'*.sh && chown -R $SITE:$SITE '$BASE'"
 
+echo "== staging native check plugin (agent_based v2 + rulesets + graphing) =="
+# Server-side plugin family: services with unit-aware metrics, the Setup
+# ruleset, and graph/perf-o-meter definitions (checkmk/plugin/ in the repo).
+PLUG="/omd/sites/$SITE/local/lib/python3/cmk_addons/plugins/$NAME"
+docker exec "$CMK_CONTAINER" bash -c "rm -rf '$PLUG' && mkdir -p '$PLUG'"
+docker cp "$REPO/checkmk/plugin/." "$CMK_CONTAINER:$PLUG/"
+docker exec "$CMK_CONTAINER" bash -c "chown -R $SITE:$SITE '$PLUG'"
+
 echo "== template + patch manifest + package (as site user) =="
 # `mkp template` auto-discovers the staged files (via `mkp find`) so the file
 # list always matches what we shipped; we only patch the metadata fields.
