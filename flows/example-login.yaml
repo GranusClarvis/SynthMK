@@ -1,0 +1,27 @@
+name: Example Login Check
+start_url: https://example.com/login
+timeout_ms: 30000
+warn_ms: 3000
+crit_ms: 7000
+browser: chrome
+steps:
+  - action: open_url
+    url: https://example.com/login
+  - action: fill
+    selector: "#username"
+    value: "{{ username }}"
+  - action: fill
+    selector: "#password"
+    value: "{{ password }}"
+  - action: click
+    selector: "button[type='submit']"
+  - action: wait_for_element
+    selector: "[data-testid='dashboard']"
+    timeout_ms: 10000
+  - action: check_visible_text
+    text: Dashboard
+  - action: check_title
+    contains: Dashboard
+  - action: check_url
+    contains: /dashboard
+

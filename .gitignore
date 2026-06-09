@@ -1,0 +1,15 @@
+.env
+.env.*
+*.key
+*.pem
+*.token
+*credentials*
+**/secrets/
+__pycache__/
+.pytest_cache/
+node_modules/
+dist/
+build/
+screenshots/
+*.log
+
