@@ -13,6 +13,13 @@ Source of truth for autonomous scheduling is Clarvis
 - [x] `[SYNTHMK_END_TO_END_DEMO]` prove flow -> runner -> Checkmk-compatible service result. → `docs/home-lab.md`, `runner/test_contract.py`, `runner/smoke_test.sh`
 - [x] `[SYNTHMK_FREE_PREMIUM_ROADMAP]` document free/community vs later premium boundaries. → `docs/product-roadmap.md`
 
+## Phase 2 — installable community addon
+
+- [x] `[SYNTHMK_INSTALL_SKELETON]` idempotent, secret-free `install.sh` (install/uninstall/dry-run/DESTDIR) + `Makefile` placing runner/flows/check into predictable locations. → `install.sh`, `Makefile`
+- [x] `[SYNTHMK_MKP_PACKAGING_SKELETON]` deterministic MKP-style package builder + metadata. → `packaging/build_mkp.sh`, `packaging/info.template`, `packaging/README.md` (byte-identical rebuild verified)
+- [x] `[SYNTHMK_VALIDATE_ENTRYPOINT]` single `make validate` target proving runner output contract + recorder-exported YAML is runner-consumable. → `Makefile` (`validate` = `test_contract.py` + `extension/validate_export.sh`)
+- [x] `[SYNTHMK_INSTALL_DOCS]` install/update/uninstall path for a Checkmk home lab. → `INSTALL.md`
+
 ## First Acceptance Target
 
 A sample flow can be executed locally and produces output like:

@@ -1,0 +1,16 @@
+# Checkmk MKP metadata (Python-dict format Checkmk's package manager reads).
+# build_mkp.sh substitutes @VERSION@ and emits both `info` and `info.json`.
+{'author': 'GranusClarvis',
+ 'description': 'SynthMK — record-and-run browser synthetic checks rendered as '
+                'native Checkmk local-check services. No cloud backend.',
+ 'download_url': 'https://github.com/GranusClarvis/SynthMK',
+ 'files': {'agent_based': [],
+           'agents': ['local/synthmk_check.sh'],
+           'checks': [],
+           'web': []},
+ 'name': 'synthmk',
+ 'title': 'SynthMK synthetic monitoring',
+ 'version': '@VERSION@',
+ 'version.min_required': '2.2.0',
+ 'version.packaged': '@VERSION@',
+ 'version.usable_until': None}

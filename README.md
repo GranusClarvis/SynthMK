@@ -35,6 +35,18 @@ python3 runner/runner.py flows/example-fail.yaml  # -> 2 "..." CRIT - Expected t
 
 See [`docs/home-lab.md`](docs/home-lab.md) for the full Checkmk wiring walkthrough.
 
+## Install / package
+
+```bash
+make validate            # contract test + recorder-export contract check (no browser)
+sudo ./install.sh        # install to /opt/synthmk + agent local-check dir
+sudo ./install.sh --uninstall
+make package             # build dist/synthmk-<version>.mkp skeleton (deterministic)
+```
+
+See [`INSTALL.md`](INSTALL.md) for the home-lab install/update/uninstall path and
+[`packaging/README.md`](packaging/README.md) for the MKP skeleton layout.
+
 ## Reference
 
 GOAT is a reference point, not the final architecture. Useful concepts include
