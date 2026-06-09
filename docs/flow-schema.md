@@ -67,9 +67,12 @@ The runner emits exactly one Checkmk local-check line:
 - [`flows/example-fail.yaml`](../flows/example-fail.yaml) — failing assertion (`Dashboard` text absent → CRIT).
 - [`flows/demo/index.html`](../flows/demo/index.html) — bundled stable local target page.
 
-## Recorder note (deferred)
+## Recorder
 
-The future Chrome recorder should emit these steps using GOAT's selector ladder
-(`data-testid` → stable id → unique `name` → unique class combo → `nth-of-type`
-path). That keeps recorded selectors stable and directly compatible with this
-schema. The recorder itself is **out of scope** for this iteration.
+The [`extension/`](../extension/) Chrome recorder (MV3) emits these steps using
+GOAT's selector ladder (`data-testid` → stable id → unique `name` → unique class
+combo → `nth-of-type` path), so recorded selectors stay stable and directly
+compatible with this schema. Record a flow → **Export YAML** → save under
+`flows/` → run with `runner/runner.py`. The exporter is validated against this
+contract browser-free by [`extension/validate_export.sh`](../extension/validate_export.sh),
+which produces [`flows/recorded-sample.yaml`](../flows/recorded-sample.yaml).

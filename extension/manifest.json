@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "SynthMK Recorder",
+  "version": "0.1.0",
+  "description": "Record browser flows (navigation, clicks, fills, assertions) and export readable SynthMK YAML flow files.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "SynthMK Recorder"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["recorder_export.js", "content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
