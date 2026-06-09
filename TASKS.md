@@ -20,6 +20,13 @@ Source of truth for autonomous scheduling is Clarvis
 - [x] `[SYNTHMK_VALIDATE_ENTRYPOINT]` single `make validate` target proving runner output contract + recorder-exported YAML is runner-consumable. → `Makefile` (`validate` = `test_contract.py` + `extension/validate_export.sh`)
 - [x] `[SYNTHMK_INSTALL_DOCS]` install/update/uninstall path for a Checkmk home lab. → `INSTALL.md`
 
+## Phase 3 — community release quality
+
+- [x] `[SYNTHMK_CI_CONTRACT]` single `make ci` / `scripts/ci.sh` entrypoint running all deterministic gates (validate, shell+JS syntax, package determinism, secret scan, version consistency). → `scripts/ci.sh`, `Makefile` (`ci`)
+- [x] `[SYNTHMK_GITHUB_ACTIONS_CI]` GitHub Actions workflow running the same `make ci` contract on push/PR to main. → `.github/workflows/ci.yml`
+- [x] `[SYNTHMK_RELEASE_DOCS]` changelog + release checklist preparing the v0.1.0 community release. → `CHANGELOG.md`, `RELEASE_CHECKLIST.md`
+- [x] `[SYNTHMK_VERSION_CONSISTENCY_CHECK]` CI gate asserting `VERSION` == built `info.json` version == docs version refs. → `scripts/ci.sh` (version-consistency section)
+
 ## First Acceptance Target
 
 A sample flow can be executed locally and produces output like:

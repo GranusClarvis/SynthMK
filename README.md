@@ -38,14 +38,20 @@ See [`docs/home-lab.md`](docs/home-lab.md) for the full Checkmk wiring walkthrou
 ## Install / package
 
 ```bash
+make ci                  # full release contract (validate + syntax + determinism + secrets + version)
 make validate            # contract test + recorder-export contract check (no browser)
 sudo ./install.sh        # install to /opt/synthmk + agent local-check dir
 sudo ./install.sh --uninstall
 make package             # build dist/synthmk-<version>.mkp skeleton (deterministic)
 ```
 
-See [`INSTALL.md`](INSTALL.md) for the home-lab install/update/uninstall path and
-[`packaging/README.md`](packaging/README.md) for the MKP skeleton layout.
+`make ci` is the single contract GitHub Actions and autonomous agents both run
+(see [`scripts/ci.sh`](scripts/ci.sh) and [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+
+See [`INSTALL.md`](INSTALL.md) for the home-lab install/update/uninstall path,
+[`packaging/README.md`](packaging/README.md) for the MKP skeleton layout,
+[`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) for cutting a release, and
+[`CHANGELOG.md`](CHANGELOG.md) for the version history.
 
 ## Reference
 
