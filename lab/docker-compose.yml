@@ -42,8 +42,10 @@ services:
     hostname: synthmk-runner
     environment:
       # Base URL the OPERATOR's browser uses to open screenshot links. 9180 is
-      # published below, so localhost works from the host running the lab.
-      - SYNTHMK_SHOT_BASE_URL=http://localhost:9180
+      # published below. Defaults to localhost (testing on the lab host); set
+      # SYNTHMK_SHOT_BASE_URL=http://<lan-ip>:9180 to click links from another
+      # machine on the LAN.
+      - SYNTHMK_SHOT_BASE_URL=${SYNTHMK_SHOT_BASE_URL:-http://localhost:9180}
     volumes:
       - ./flows:/opt/synthmk/flows:ro                              # lab flows
       - ./flows.conf:/opt/synthmk/runner-node/flows.conf:ro        # lab schedule
