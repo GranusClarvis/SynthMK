@@ -4,9 +4,9 @@
 PYTHON ?= python3
 SYNTHMK_HOME ?= /opt/synthmk
 
-FLOWS := $(wildcard flows/*.yaml)
+FLOWS := $(wildcard flows/*.yaml) $(wildcard lab/flows/*.yaml)
 
-.PHONY: help ci validate validate-contract validate-export lint-flows package package-contract install uninstall clean
+.PHONY: help ci validate validate-contract validate-export lint-flows package package-contract real-mkp runner-image lab-up lab-down install uninstall clean
 
 help:
 	@echo "SynthMK targets:"
@@ -17,8 +17,11 @@ help:
 	@echo "  make lint-flows        static schema lint of flows/*.yaml (browser-free)"
 	@echo "  make install           install to \$$SYNTHMK_HOME + agent local dir (root)"
 	@echo "  make uninstall         remove install"
-	@echo "  make package           build dist/synthmk-<version>.mkp skeleton"
+	@echo "  make package           build dist/synthmk-<version>.mkp skeleton (deterministic)"
 	@echo "  make package-contract  assert built MKP payload has expected files/paths"
+	@echo "  make real-mkp          build a REAL installable .mkp via a running Checkmk site"
+	@echo "  make runner-image      build the runner-node Docker image (synthmk-runner)"
+	@echo "  make lab-up / lab-down bring the LAN lab (Checkmk + runner + demo) up / down"
 	@echo "  make clean             remove dist/ and caches"
 
 # The single contract GitHub Actions and future agents both run. Superset of
@@ -54,6 +57,21 @@ package:
 
 package-contract:
 	$(PYTHON) packaging/test_package_contract.py
+
+# Real, installable MKP via a running Checkmk site's own mkp tool (needs the lab
+# Checkmk container up: `make lab-up` or `cd lab && docker compose up -d checkmk`).
+real-mkp:
+	bash packaging/make_real_mkp.sh
+
+# Runner-node appliance + LAN lab (Docker). Not part of `make ci` (needs Docker).
+runner-image:
+	docker build -f runner-node/Dockerfile -t synthmk-runner:$(shell cat VERSION) .
+
+lab-up:
+	cd lab && docker compose up -d --build
+
+lab-down:
+	cd lab && docker compose down -v
 
 clean:
 	rm -rf dist

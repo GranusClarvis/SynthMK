@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<!--
+  SynthMK lab "intranet" site. Served by nginx ONLY on the lab network, so it
+  stands in for an internal app the Checkmk server itself may not reach but the
+  runner node can. To demo a FAILURE: change or remove the "Account Overview"
+  text below, save, and watch the synthetic service flip to CRIT with a
+  screenshot link on the next run (nginx serves the mounted file live).
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Internal Dashboard</title>
+</head>
+<body data-testid="intranet-home">
+  <h1>Internal Dashboard</h1>
+  <p>Welcome to the internal portal.</p>
+  <section data-testid="overview">
+    <h2>Account Overview</h2>
+    <p>Everything is operating normally.</p>
+  </section>
+</body>
+</html>

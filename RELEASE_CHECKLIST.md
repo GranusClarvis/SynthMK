@@ -22,16 +22,23 @@ is browser-free and runs from a clean checkout.
 
 ## 3. Package
 
-- [ ] `make package` builds `dist/synthmk-<VERSION>.mkp`.
+- [ ] `make package` builds the deterministic skeleton `dist/synthmk-<VERSION>.mkp`.
 - [ ] Record the printed `sha256:` in the release notes (determinism receipt).
 - [ ] `tar -tzf dist/synthmk-<VERSION>.mkp` shows only intended payload
       (no `.git`, `__pycache__`, `.env`, screenshots, or node_modules).
+- [ ] **Real MKP:** `make lab-up` then `make real-mkp` builds the genuine
+      installable `dist/synthmk-<VERSION>.mkp` (info + info.json + member tarballs).
+      Confirm `mkp inspect` lists the expected files and the correct version.
 
-## 4. Install smoke (optional, home-lab)
+## 4. Install / lab smoke (recommended)
 
 - [ ] `sudo ./install.sh --dry-run` lists the expected target paths.
 - [ ] On a throwaway host: `sudo ./install.sh` then `sudo ./install.sh --uninstall`
       both succeed and leave the system clean.
+- [ ] **End-to-end:** `make lab-up`, follow `docs/lan-quickstart.md` — discover the
+      synthetic service, break the demo site, confirm CRIT + screenshot link.
+      Upload `dist/synthmk-<VERSION>.mkp` via *Setup → Extension packages* with no
+      errors. `make lab-down` when done.
 
 ## 5. Tag & publish
 

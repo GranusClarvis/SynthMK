@@ -40,7 +40,7 @@ fi
 
 # --- 1b. flow lint (every tracked flow) ------------------------------------
 section "flow lint (static schema check on tracked flows)"
-mapfile -t FLOWS < <(printf '%s\n' "${TRACKED[@]}" | grep -E '^flows/.*\.ya?ml$' || true)
+mapfile -t FLOWS < <(printf '%s\n' "${TRACKED[@]}" | grep -E '^(flows|lab/flows)/.*\.ya?ml$' || true)
 if [[ "${#FLOWS[@]}" -eq 0 ]]; then
   ok "no tracked flow files to lint"
 elif $PY runner/flow_lint.py "${FLOWS[@]}" >/tmp/synthmk_ci_lint.log 2>&1; then

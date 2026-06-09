@@ -56,7 +56,13 @@ OPTIONAL_STEP_KEYS = {"action", "timeout_ms", "value", "comment"}
 TOP_LEVEL_KNOWN = {
     "name", "start_url", "timeout_ms", "warn_ms", "crit_ms",
     "browser", "screenshot_on_failure", "steps",
+    # v0.2.0 additions:
+    "checkmk_host",   # piggyback target host; the result is attributed to it
+    "state_mode",     # "digit" (default) | "dynamic" (emit 'P', Checkmk thresholds)
 }
+
+# Allowed values for the state_mode top-level field.
+STATE_MODES = {"digit", "dynamic"}
 
 
 def lint_flow(data: Any, *, source: str = "<flow>") -> tuple[list[str], list[str]]:
@@ -79,6 +85,23 @@ def lint_flow(data: Any, *, source: str = "<flow>") -> tuple[list[str], list[str
         errors.append(
             f"{source}: warn_ms ({warn_ms}) must be <= crit_ms ({crit_ms})"
         )
+
+    state_mode = data.get("state_mode")
+    if state_mode is not None and str(state_mode).lower() not in STATE_MODES:
+        errors.append(
+            f"{source}: state_mode '{state_mode}' must be one of {sorted(STATE_MODES)}"
+        )
+    # Dynamic state delegates thresholding to Checkmk, so a crit_ms is required
+    # for it to be able to ever escalate — otherwise the service can only be OK.
+    if str(state_mode).lower() == "dynamic" and crit_ms is None and warn_ms is None:
+        warnings.append(
+            f"{source}: state_mode 'dynamic' without warn_ms/crit_ms — Checkmk "
+            f"has no threshold to escalate on (service will stay OK on success)"
+        )
+
+    checkmk_host = data.get("checkmk_host")
+    if checkmk_host is not None and (not isinstance(checkmk_host, str) or not checkmk_host.strip()):
+        errors.append(f"{source}: checkmk_host must be a non-empty string when set")
 
     steps = data.get("steps")
     if not isinstance(steps, list):

@@ -1,0 +1,15 @@
+# Lab flow (FLAT attribution): becomes a service of the runner node itself.
+# Targets the internal-only demo site, reachable only from inside the lab network.
+name: Synthetic Intranet Home
+start_url: http://intranet-demo/
+timeout_ms: 15000
+warn_ms: 4000
+crit_ms: 10000
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: http://intranet-demo/
+  - action: check_title
+    contains: Internal Dashboard
+  - action: check_visible_text
+    text: Welcome to the internal portal.

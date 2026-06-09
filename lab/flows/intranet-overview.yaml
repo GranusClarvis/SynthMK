@@ -1,0 +1,20 @@
+# Lab flow (PIGGYBACK attribution): checkmk_host attributes the result to the
+# "intranet-demo" host, so the monitored site shows up as its OWN host in Checkmk
+# carrying this service — not as a service of the runner node. This is the
+# "one runner, many target hosts" pattern. Remove "Account Overview" from
+# intranet-demo/html/index.html to see it go CRIT with a screenshot link.
+name: Synthetic Account Overview
+checkmk_host: intranet-demo
+start_url: http://intranet-demo/
+timeout_ms: 15000
+warn_ms: 4000
+crit_ms: 10000
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: http://intranet-demo/
+  - action: wait_for_element
+    selector: "[data-testid='overview']"
+    timeout_ms: 5000
+  - action: check_visible_text
+    text: Account Overview

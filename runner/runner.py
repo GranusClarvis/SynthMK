@@ -68,6 +68,13 @@ class FlowResult:
     summary: str = "Flow completed successfully"
     screenshot: str | None = None
     step_index: int | None = None
+    # Output-format options (resolved by main()):
+    #   dynamic       -> emit a 'P' state on success and let Checkmk threshold
+    #                    duration from the perfdata warn/crit (state_mode: dynamic).
+    #   shot_base_url -> turn a captured screenshot path into a clickable link
+    #                    served by the runner-node's screenshot HTTP server.
+    dynamic: bool = False
+    shot_base_url: str | None = None
 
     def perfdata(self) -> str:
         warn = "" if self.warn_ms is None else str(self.warn_ms)
@@ -75,10 +82,28 @@ class FlowResult:
         # Checkmk perfdata: name=value;warn;crit  (unit suffix on value is allowed)
         return f"duration={self.duration_ms}ms;{warn};{crit}"
 
+    def _screenshot_suffix(self) -> str:
+        if not self.screenshot:
+            return ""
+        if self.shot_base_url:
+            # Clickable link rendered in the Checkmk service Details — requires the
+            # "Escape HTML codes in service output" rule turned Off for this host.
+            name = os.path.basename(self.screenshot)
+            url = f"{self.shot_base_url.rstrip('/')}/{name}"
+            return f' <a href="{url}">screenshot</a>'
+        return f" (screenshot: {self.screenshot})"
+
     def checkmk_line(self) -> str:
-        extra = ""
-        if self.screenshot:
-            extra = f" (screenshot: {self.screenshot})"
+        extra = self._screenshot_suffix()
+        # Dynamic mode on a passing flow: hand state determination to Checkmk via
+        # the 'P' marker (it computes OK/WARN/CRIT from the duration thresholds).
+        # Any real failure keeps an explicit digit so the failure message is
+        # authoritative and never silently downgraded by a missing threshold.
+        if self.dynamic and self.status == OK:
+            return (
+                f"P \"{self.service}\" {self.perfdata()} "
+                f"{_oneline(self.summary)}{extra}"
+            )
         return (
             f"{self.status} \"{self.service}\" {self.perfdata()} "
             f"{STATE_NAME[self.status]} - {_oneline(self.summary)}{extra}"
@@ -147,21 +172,40 @@ def _run_step(page, step: dict[str, Any], default_timeout: int) -> None:
         raise FlowError(f"Unknown action '{action}'", UNKNOWN)
 
 
-def run_flow(path: Path, headed: bool = False) -> FlowResult:
+def run_flow(
+    path: Path,
+    headed: bool = False,
+    *,
+    dynamic: bool | None = None,
+    shot_base_url: str | None = None,
+) -> FlowResult:
     flow = load_flow(path)
     service = flow.get("name", path.stem)
     warn_ms = flow.get("warn_ms")
     crit_ms = flow.get("crit_ms")
     default_timeout = int(flow.get("timeout_ms", 30000))
     shot_on_fail = bool(flow.get("screenshot_on_failure", False))
+    # CLI flag wins; otherwise honor the flow's state_mode (digit|dynamic).
+    if dynamic is None:
+        dynamic = str(flow.get("state_mode", "digit")).lower() == "dynamic"
 
-    result = FlowResult(service=service, warn_ms=warn_ms, crit_ms=crit_ms)
+    result = FlowResult(
+        service=service, warn_ms=warn_ms, crit_ms=crit_ms,
+        dynamic=dynamic, shot_base_url=shot_base_url,
+    )
 
     from playwright.sync_api import sync_playwright
 
+    # In a container Chromium's sandbox usually can't initialize; the runner-node
+    # appliance sets SYNTHMK_NO_SANDBOX=1. --disable-dev-shm-usage avoids crashes
+    # on the small default /dev/shm in Docker.
+    launch_args: dict[str, Any] = {}
+    if os.environ.get("SYNTHMK_NO_SANDBOX"):
+        launch_args["args"] = ["--no-sandbox", "--disable-dev-shm-usage"]
+
     start = time.monotonic()
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=not headed)
+        browser = p.chromium.launch(headless=not headed, **launch_args)
         page = browser.new_page()
         try:
             for i, step in enumerate(flow["steps"]):
@@ -186,7 +230,9 @@ def run_flow(path: Path, headed: bool = False) -> FlowResult:
             browser.close()
 
     # Duration thresholds only escalate a passing flow (a failure stays CRIT).
-    if result.status == OK:
+    # In dynamic mode Checkmk owns the thresholding, so the runner does not
+    # pre-compute WARN/CRIT from duration here.
+    if result.status == OK and not dynamic:
         if crit_ms is not None and result.duration_ms >= crit_ms:
             result.status = CRIT
             result.summary = (
@@ -206,10 +252,24 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="SynthMK synthetic runner")
     parser.add_argument("flow", type=Path, help="Path to a YAML flow file")
     parser.add_argument("--headed", action="store_true", help="Run with a visible browser")
+    parser.add_argument(
+        "--p-state", action="store_true",
+        help="Emit a 'P' state on success and let Checkmk threshold duration "
+             "(overrides the flow's state_mode).",
+    )
+    parser.add_argument(
+        "--screenshot-base-url", default=os.environ.get("SYNTHMK_SHOT_BASE_URL"),
+        help="Base URL of the screenshot HTTP server; renders a clickable link "
+             "in the failing service (default: $SYNTHMK_SHOT_BASE_URL).",
+    )
     args = parser.parse_args(argv)
+    dynamic = True if args.p_state else None  # None => honor flow state_mode
 
     try:
-        result = run_flow(args.flow, headed=args.headed)
+        result = run_flow(
+            args.flow, headed=args.headed,
+            dynamic=dynamic, shot_base_url=args.screenshot_base_url,
+        )
     except FlowError as fe:
         # Schema / load failure → emit an UNKNOWN Checkmk line, not a traceback.
         service = args.flow.stem

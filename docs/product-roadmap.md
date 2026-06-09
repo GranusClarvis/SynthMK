@@ -11,9 +11,16 @@ Everything in this repo is free and self-hostable:
 
 - Readable YAML **flow schema** (`docs/flow-schema.md`).
 - Python **Playwright runner** emitting Checkmk local-check output
-  (`runner/runner.py`).
-- **Checkmk local-check skeleton** (`checkmk/synthmk_check.sh`) — drop-in,
-  uses Checkmk's own interval and service rendering.
+  (`runner/runner.py`), with optional dynamic (`P`) state and clickable
+  failure-screenshot links.
+- **Checkmk local-check** (`checkmk/synthmk_check.sh`) — drop-in, uses Checkmk's
+  own interval and service rendering.
+- **Runner-node Docker appliance** (`runner-node/`) you host inside the intranet:
+  scheduler (spool-dir, scales to many/long checks), agent transport, screenshot
+  server, and **piggyback** so each monitored site is its own Checkmk host.
+- **Chrome MV3 recorder** (`extension/`) — record → export flow YAML.
+- **Self-hosted LAN lab** (`lab/`) — Checkmk Raw + runner + internal demo site,
+  one `docker compose up`.
 - Bundled **demo page + example flows** (OK + failing) and a browser-free
   **validation command** (`runner/test_contract.py`).
 - Core assertions: visible text, page title, URL, element wait, warn/crit
@@ -26,14 +33,16 @@ flow still working?" as a normal service, without writing Playwright.
 
 Candidates for a later paid/hosted tier, explicitly deferred:
 
-- **Chrome recorder** that captures clicks/fills/navigation into flow files
-  using GOAT's selector ladder (placeholder only this iteration).
-- Encrypted **secret store** and credential vault (MVP resolves `{{ }}` from env).
+- Encrypted **secret store** and credential vault (today resolves `{{ }}` from env).
 - **Multi-step result drill-down** UI / per-step timing dashboards (GOAT's
-  admin-suite territory — deliberately rejected for MVP).
-- **Scheduling/fleet**: remote runner pool, distributed locations, cron beyond
-  Checkmk's interval.
+  admin-suite territory — deliberately rejected).
+- **Multi-node fleet / locations**: a pool of runner nodes with a special-agent
+  (HTTP) pull mode. v0.2.0 ships the *single* runner-node appliance; the
+  multi-node coordinator is the documented next step (see `docs/architecture.md`).
 - Hosted SaaS coordinator, alert routing integrations, SLA reporting.
+
+(The Chrome recorder and the single runner node, previously listed here, are now
+shipped in the community scope above.)
 
 ## Out of scope — first iteration (hard "no")
 

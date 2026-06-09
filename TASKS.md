@@ -33,6 +33,23 @@ Source of truth for autonomous scheduling is Clarvis
 - [x] `[SYNTHMK_FLOW_LINT]` [VERIFIED] static, browser-free flow linter (known actions, per-action required keys, `warn_ms<=crit_ms`, empty-steps) with clear messages + exit codes (0/2/3); lints every tracked flow in CI; runner↔linter action-table lockstep asserted in the contract suite. → `runner/flow_lint.py`, `make lint-flows`, `scripts/ci.sh` (flow-lint gate), tests in `runner/test_contract.py`.
 - [x] `[SYNTHMK_FAILURE_MODE_DOCS]` [VERIFIED] operator-facing failure-mode + exit-code reference for the runner, linter, and package contract. → `docs/failure-modes.md`.
 
+## v0.2.0 — LAN runner node, real MKP, screenshots
+
+- [x] `[SYNTHMK_SCHEMA_PIGGYBACK_PSTATE_SHOTS]` runner+lint: `checkmk_host` piggyback,
+      `state_mode: dynamic` (`P`), clickable screenshot links, `SYNTHMK_NO_SANDBOX`.
+      → `runner/runner.py`, `runner/flow_lint.py`, `checkmk/piggyback_wrap.sh`,
+      `runner/test_contract.py` (27 checks), `docs/flow-schema.md`.
+- [x] `[SYNTHMK_RUNNER_NODE_APPLIANCE]` Docker appliance: scheduler→spool dir (scales),
+      socat agent transport, screenshot server. → `runner-node/`.
+- [x] `[SYNTHMK_LAN_LAB]` self-hosted Checkmk Raw + runner + internal demo site;
+      verified E2E (real Chromium → discovery → live OK/CRIT → screenshot).
+      → `lab/`, `docs/lan-quickstart.md`, `docs/architecture.md`.
+- [x] `[SYNTHMK_REAL_MKP]` genuine installable `.mkp` via the site's `mkp` tool;
+      verified install on Checkmk Raw 2.3.0p48. → `packaging/make_real_mkp.sh`,
+      `make real-mkp`.
+- [x] `[SYNTHMK_POSITIONING]` README vs Robotmk; roadmap + GOAT-audit updates;
+      CI lints `lab/flows/`; `make` runner-image/lab targets; VERSION 0.2.0.
+
 ## First Acceptance Target
 
 A sample flow can be executed locally and produces output like:

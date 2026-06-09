@@ -92,6 +92,25 @@ def main() -> int:
                         summary="boom", screenshot="screenshots/s-fail.png")
     check("screenshot metadata in line", "(screenshot: screenshots/s-fail.png)" in shot.checkmk_line())
 
+    # screenshot link (v0.2.0): with a base URL, render a clickable <a href>.
+    shot_url = R.FlowResult(service="S", status=R.CRIT, duration_ms=10,
+                            summary="boom", screenshot="screenshots/s-fail.png",
+                            shot_base_url="http://runner:9180/")
+    check("screenshot link uses base url + basename",
+          '<a href="http://runner:9180/s-fail.png">screenshot</a>' in shot_url.checkmk_line())
+
+    # dynamic state (v0.2.0): passing flow emits 'P' and no "OK -" prefix so
+    # Checkmk computes the state from the duration thresholds.
+    dyn = R.FlowResult(service="S", status=R.OK, duration_ms=1200,
+                       warn_ms=3000, crit_ms=7000, dynamic=True)
+    dline = dyn.checkmk_line()
+    check("dynamic OK emits P", dline.startswith('P "S" duration=1200ms;3000;7000 '))
+    check("dynamic OK has no digit-state prefix", " OK - " not in dline)
+    # A failure stays an explicit digit even in dynamic mode.
+    dyn_fail = R.FlowResult(service="S", status=R.CRIT, duration_ms=10,
+                            summary="boom", dynamic=True)
+    check("dynamic failure keeps digit state", dyn_fail.checkmk_line().startswith('2 "S" '))
+
     print("== assertion step paths (fake page) ==")
     page = FakePage()
     # passing assertions raise nothing
@@ -164,6 +183,23 @@ def main() -> int:
 
     _, warns = L.lint_flow({"steps": [{"action": "open_url", "url": "x", "typo": 1}]}, source="t")
     check("unexpected step key is a warning, not error", any("typo" in w for w in warns))
+
+    # v0.2.0 fields: state_mode + checkmk_host
+    errs, _ = L.lint_flow({"state_mode": "sideways",
+                           "steps": [{"action": "open_url", "url": "x"}]}, source="t")
+    check("bad state_mode is an error", any("state_mode" in e for e in errs))
+
+    errs, _ = L.lint_flow({"state_mode": "dynamic", "crit_ms": 7000,
+                           "steps": [{"action": "open_url", "url": "x"}]}, source="t")
+    check("valid dynamic state_mode is clean", errs == [])
+
+    errs, _ = L.lint_flow({"checkmk_host": "",
+                           "steps": [{"action": "open_url", "url": "x"}]}, source="t")
+    check("empty checkmk_host is an error", any("checkmk_host" in e for e in errs))
+
+    errs, _ = L.lint_flow({"checkmk_host": "intranet-wiki",
+                           "steps": [{"action": "open_url", "url": "x"}]}, source="t")
+    check("valid checkmk_host is clean", errs == [])
 
     # The linter's action table must stay in lockstep with the runner's dispatch.
     check("lint actions cover runner ASSERT_ACTIONS",

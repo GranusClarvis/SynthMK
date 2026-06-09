@@ -85,6 +85,23 @@ the **recorder → readable steps → Playwright runner** path.
    delegates scheduling entirely to Checkmk's existing local-check interval —
    no separate scheduler, no coordinator, no remote runner network in iteration one.
 
+## Update (v0.2.0): the runner node, Checkmk-native
+
+GOAT's strongest idea for our use case is the **remote runner that executes flows
+from inside the network** (so internal-only sites can be checked). SynthMK adopts
+*that idea* but **not GOAT's mechanism**. Where GOAT uses a Next.js admin-suite
+coordinator that remote agents poll, SynthMK's `runner-node/` appliance is purely
+Checkmk-native:
+
+- a lightweight **scheduler** writes results to the Checkmk **spool directory**
+  (so slow browser runs never block agent collection — the scaling story), and
+- **piggyback** (`checkmk/piggyback_wrap.sh`) attributes each result to its target
+  host, so one node serves many "sites" — GOAT's "locations" without a coordinator.
+
+Checkmk remains the UI, the scheduler of record, and the alerting engine. There is
+still **no central SynthMK service** to run — the rejection of GOAT's admin-suite
+(non-goal #1) stands. A multi-node *fleet* (special-agent pull) remains future work.
+
 ## How this shapes the SynthMK MVP
 
 - Flow schema = a readable YAML projection of GOAT's `RecordedStep`.

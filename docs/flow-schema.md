@@ -15,7 +15,9 @@ Playwright code.
 | `warn_ms` | int | no | Total-duration WARN threshold → Checkmk perfdata `;warn`. |
 | `crit_ms` | int | no | Total-duration CRIT threshold → Checkmk perfdata `;crit`. |
 | `browser` | string | no (`chrome`) | Target browser; MVP runs Chromium. |
-| `screenshot_on_failure` | bool | no (false) | On a failing step, capture `screenshots/<flow>-fail-step<N>.png` and cite it in the output line. |
+| `screenshot_on_failure` | bool | no (false) | On a failing step, capture `screenshots/<flow>-fail-step<N>.png` and cite it in the output line (a clickable link when a screenshot base URL is configured — see below). |
+| `state_mode` | string | no (`digit`) | `digit` = runner computes the state (authoritative failure message); `dynamic` = emit a `P` state on success and let Checkmk threshold `duration` from `warn_ms`/`crit_ms`. |
+| `checkmk_host` | string | no | Piggyback target: attribute the result to this Checkmk host (the monitored site appears as its own host) instead of the runner node. Consumed by the runner-node scheduler / `checkmk/piggyback_wrap.sh`, not `runner.py`. |
 | `steps` | list | yes | Ordered steps (below). |
 
 ## Step actions
@@ -60,6 +62,43 @@ The runner emits exactly one Checkmk local-check line:
 - A passing flow over `warn_ms`/`crit_ms` → `1/WARN` or `2/CRIT` on duration.
 - Browser/schema errors fail **open** to `3/UNKNOWN` (never a traceback, never
   multi-line) so the Checkmk service never goes silent.
+
+### Dynamic state (`state_mode: dynamic`)
+
+With `state_mode: dynamic` (or `runner.py --p-state`) a *passing* flow emits a
+`P` marker instead of a digit and lets Checkmk compute the state from the
+duration thresholds:
+
+```text
+P "<name>" duration=<ms>ms;<warn>;<crit> <summary>
+```
+
+A real failure still emits an explicit `2/CRIT` (or `3/UNKNOWN`) so the failure
+message is never silently downgraded by a missing threshold. Default stays
+`digit` (the runner is authoritative).
+
+### Screenshot links
+
+When the runner is given a screenshot base URL (`--screenshot-base-url` or
+`$SYNTHMK_SHOT_BASE_URL`) and a step fails with `screenshot_on_failure: true`,
+the failing line ends with a clickable link instead of a bare path:
+
+```text
+2 "<name>" duration=... CRIT - <message> <a href="http://<runner>:9180/<flow>-fail-step<N>.png">screenshot</a>
+```
+
+The runner-node appliance serves the `screenshots/` directory over HTTP for
+exactly this. The link only renders in the Checkmk GUI if **"Escape HTML codes
+in service output"** is turned **Off** for the runner host (scope it narrowly —
+escaping-off is an XSS surface; SynthMK's output is always a single sanitized
+line). Without a base URL the line keeps the plain `(screenshot: <path>)` form.
+
+### Piggyback (`checkmk_host`)
+
+By default a flow becomes a service of the runner node. Set `checkmk_host:` and
+the runner-node scheduler wraps the result in a Checkmk piggyback envelope
+(`checkmk/piggyback_wrap.sh`) so the **monitored site appears as its own Checkmk
+host** carrying the synthetic service — one runner, many target hosts.
 
 ## Examples
 

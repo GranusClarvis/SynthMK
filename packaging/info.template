@@ -4,13 +4,14 @@
  'description': 'SynthMK — record-and-run browser synthetic checks rendered as '
                 'native Checkmk local-check services. No cloud backend.',
  'download_url': 'https://github.com/GranusClarvis/SynthMK',
- 'files': {'agent_based': [],
-           'agents': ['local/synthmk_check.sh'],
+ 'files': {'agents': ['custom/synthmk/lib/local/synthmk_check.sh',
+                      'custom/synthmk/lib/local/piggyback_wrap.sh'],
+           'agent_based': [],
            'checks': [],
            'web': []},
  'name': 'synthmk',
  'title': 'SynthMK synthetic monitoring',
  'version': '@VERSION@',
- 'version.min_required': '2.2.0',
+ 'version.min_required': '2.3.0',
  'version.packaged': '@VERSION@',
  'version.usable_until': None}

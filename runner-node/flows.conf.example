@@ -1,0 +1,17 @@
+# SynthMK runner-node flow schedule.
+#
+# One line per check:
+#     <flow_file>   <interval_seconds>   [checkmk_host]
+#
+#   flow_file       file under the mounted flows/ dir (SYNTHMK_FLOWS)
+#   interval_s      how often to run this flow (the scheduler is independent
+#                   per flow, so slow checks never block fast ones)
+#   checkmk_host    OPTIONAL piggyback target — the result is attributed to this
+#                   Checkmk host (the monitored site shows up as its own host).
+#                   Omit to attach the service to the runner node itself.
+#
+# Copy to flows.conf and edit. Lines starting with '#' and blank lines ignored.
+
+example-ok.yaml          300
+# intranet-wiki.yaml     120     intranet-wiki
+# intranet-grafana.yaml  120     intranet-grafana

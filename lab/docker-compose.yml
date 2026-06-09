@@ -1,0 +1,73 @@
+# SynthMK LAN lab — full end-to-end on one machine.
+#
+#   checkmk        self-hosted Checkmk Raw (free), the monitoring server + UI
+#   synthmk-runner the runner-node appliance (built from this repo)
+#   intranet-demo  an "internal only" site, reachable ONLY on the lab network
+#                  (not published to the host) — the thing we synthetically check
+#
+# Quick start:  docs/lan-quickstart.md
+#   docker compose up -d --build
+#   docker compose logs checkmk | grep -i password     # cmkadmin password
+#   open http://localhost:8080/cmk/
+name: synthmk-lab
+
+services:
+  checkmk:
+    image: checkmk/check-mk-raw:2.3.0-latest
+    container_name: cmk
+    hostname: cmk
+    ports:
+      - "8080:5000"      # web UI  -> http://localhost:8080/cmk/
+      - "8000:8000"      # agent receiver (not required for the plaintext lab)
+    environment:
+      - CMK_SITE_ID=cmk
+      - CMK_PASSWORD=synthmk-lab-admin   # cmkadmin password (lab only)
+    tmpfs:
+      - /opt/omd/sites/cmk/tmp:uid=1000,gid=1000
+    volumes:
+      - cmk-data:/omd/sites
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 4096
+    networks: [labnet]
+    restart: unless-stopped
+
+  synthmk-runner:
+    build:
+      context: ..                       # repo root
+      dockerfile: runner-node/Dockerfile
+    image: synthmk-runner:0.2.0
+    container_name: synthmk-runner
+    hostname: synthmk-runner
+    environment:
+      # Base URL the OPERATOR's browser uses to open screenshot links. 9180 is
+      # published below, so localhost works from the host running the lab.
+      - SYNTHMK_SHOT_BASE_URL=http://localhost:9180
+    volumes:
+      - ./flows:/opt/synthmk/flows:ro                              # lab flows
+      - ./flows.conf:/opt/synthmk/runner-node/flows.conf:ro        # lab schedule
+    ports:
+      - "9180:9180"      # screenshots (clickable from your browser)
+    # 6556 is intentionally NOT published — Checkmk reaches it over labnet by name.
+    networks: [labnet]
+    depends_on: [intranet-demo]
+    restart: unless-stopped
+
+  intranet-demo:
+    image: nginx:alpine
+    container_name: intranet-demo
+    hostname: intranet-demo
+    volumes:
+      - ./intranet-demo/html:/usr/share/nginx/html:ro
+    # NO ports: published -> proves the site is reachable only from inside the LAN
+    # (only synthmk-runner can hit it; your host and the internet cannot).
+    networks: [labnet]
+    restart: unless-stopped
+
+networks:
+  labnet:
+    driver: bridge
+
+volumes:
+  cmk-data:
