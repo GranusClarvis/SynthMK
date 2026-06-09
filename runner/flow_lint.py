@@ -44,14 +44,31 @@ REQUIRED_KEYS: dict[str, tuple[str, ...]] = {
     "open_url": ("url",),
     "click": ("selector",),
     "fill": ("selector",),          # value is optional (defaults to "")
+    "press": ("key",),              # selector is optional (else focused element)
+    "select_option": ("selector",),
+    "hover": ("selector",),
+    "scroll_into_view": ("selector",),
+    "wait_ms": ("ms",),
     "wait_for_element": ("selector",),
+    "wait_for_url": ("contains",),
     "check_visible_text": ("text",),
     "check_title": ("contains",),
     "check_url": ("contains",),
+    "check_element_count": ("selector",),  # min is optional (defaults to 1)
 }
 
 # Keys a step may legally carry in addition to its required ones.
-OPTIONAL_STEP_KEYS = {"action", "timeout_ms", "value", "comment"}
+# 'optional: true' = best-effort step (e.g. cookie-consent click): a failure
+# is skipped instead of failing the flow.
+OPTIONAL_STEP_KEYS = {"action", "timeout_ms", "comment", "optional"}
+
+# Per-action extras beyond the always-allowed OPTIONAL_STEP_KEYS.
+ACTION_OPTIONAL_KEYS: dict[str, set[str]] = {
+    "fill": {"value", "sensitive"},
+    "press": {"selector"},
+    "select_option": {"value"},
+    "check_element_count": {"min"},
+}
 
 TOP_LEVEL_KNOWN = {
     "name", "start_url", "timeout_ms", "warn_ms", "crit_ms",
@@ -127,10 +144,20 @@ def lint_flow(data: Any, *, source: str = "<flow>") -> tuple[list[str], list[str
         for req in REQUIRED_KEYS[action]:
             if req not in step or step[req] in (None, ""):
                 errors.append(f"{where} ('{action}'): missing required key '{req}'")
-        allowed = OPTIONAL_STEP_KEYS | set(REQUIRED_KEYS[action])
+        allowed = (OPTIONAL_STEP_KEYS | set(REQUIRED_KEYS[action])
+                   | ACTION_OPTIONAL_KEYS.get(action, set()))
         for key in step:
             if key not in allowed:
                 warnings.append(f"{where} ('{action}'): unexpected key '{key}'")
+        # Credential hygiene: a fill that references {{ secret.X }} should be
+        # marked sensitive so failure screenshots mask form fields.
+        if action == "fill" and not step.get("sensitive"):
+            value = str(step.get("value", ""))
+            if "secret." in value and "{{" in value:
+                warnings.append(
+                    f"{where} ('fill'): references a secret but is not marked "
+                    f"'sensitive: true' (failure screenshots would not mask inputs)"
+                )
 
     return (errors, warnings)
 

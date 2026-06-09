@@ -42,8 +42,31 @@ function recordNavigation(url) {
   return addStep({ action: 'open_url', url: url });
 }
 
+// State is loaded ONCE per worker lifetime and messages are processed on a
+// serialized promise chain. Re-loading from chrome.storage on every message
+// (the old design) made two back-to-back ADD_STEPs race each other's save —
+// the second load saw stale steps and its save dropped the first step (a
+// recorded fill could vanish when Enter followed it within milliseconds).
+var READY = loadState();
+var CHAIN = Promise.resolve();
+
 chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
-  loadState().then(function () {
+  CHAIN = CHAIN
+    .then(function () { return READY; })
+    .then(function () { return handleMessage(message, sender, sendResponse); })
+    .catch(function () { try { sendResponse({ ok: false }); } catch (e) { /* gone */ } });
+  return true; // async sendResponse
+});
+
+function handleMessage(message, sender, sendResponse) {
+  return new Promise(function (resolve) {
+    var respond = function (payload) { try { sendResponse(payload); } catch (e) { /* popup closed */ } resolve(); };
+    dispatch(message, sender, respond);
+  });
+}
+
+function dispatch(message, sender, sendResponse) {
+  {
     switch (message.type) {
       case 'START':
         STATE.isRecording = true;
@@ -98,6 +121,16 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
         }
         return;
 
+      case 'DELETE_STEP':
+        // Remove one recorded step from the popup's live step list.
+        if (typeof message.index === 'number' && STATE.steps[message.index] != null) {
+          STATE.steps.splice(message.index, 1);
+          saveState().then(function () { sendResponse({ ok: true, state: publicState() }); });
+        } else {
+          sendResponse({ ok: false, state: publicState() });
+        }
+        return;
+
       case 'GET_STATE':
         sendResponse({ isRecording: STATE.isRecording, state: publicState() });
         return;
@@ -105,9 +138,8 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
       default:
         sendResponse({ ok: false });
     }
-  });
-  return true; // async sendResponse
-});
+  }
+}
 
 function publicState() {
   return { isRecording: STATE.isRecording, stepCount: STATE.steps.length, steps: STATE.steps };

@@ -34,6 +34,8 @@ EXPECTED_FILES = [
     "info.json",
     "local/lib/check_mk_agent/local/300/synthmk_check.sh",
     "local/share/synthmk/runner/runner.py",
+    "local/share/synthmk/runner/secret_source.py",
+    "local/share/synthmk/runner/flow_lint.py",
     "local/share/synthmk/flows/example-ok.yaml",
     "local/share/synthmk/flows/demo/index.html",
     "local/share/synthmk/checkmk/synthmk_check.sh",

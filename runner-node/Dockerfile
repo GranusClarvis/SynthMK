@@ -36,8 +36,13 @@ COPY VERSION      ${SYNTHMK_HOME}/VERSION
 
 RUN chmod +x ${SYNTHMK_HOME}/runner-node/*.sh ${SYNTHMK_HOME}/checkmk/*.sh \
  && mkdir -p ${SYNTHMK_SPOOL} ${SYNTHMK_SHOT_DIR} \
+ && chown -R pwuser:pwuser ${SYNTHMK_SPOOL} ${SYNTHMK_SHOT_DIR} \
  # Default schedule if the operator doesn't mount their own flows.conf.
  && cp ${SYNTHMK_HOME}/runner-node/flows.conf.example ${SYNTHMK_HOME}/runner-node/flows.conf
+
+# The shot server doubles as the container liveness probe.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
+  CMD curl -fsS "http://localhost:${SYNTHMK_SHOT_PORT:-9180}/healthz" || exit 1
 
 EXPOSE 6556 9180
 ENTRYPOINT ["/usr/bin/tini", "--"]

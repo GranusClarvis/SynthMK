@@ -52,20 +52,34 @@ except Exception as e:  # noqa: BLE001
 
 print("  ok   - runner.load_flow parsed the exported YAML")
 
-# Every emitted step must use an action the runner dispatch table handles.
-known = R.ASSERT_ACTIONS | {"open_url", "click", "fill"}
+# Every emitted step must use an action the runner dispatch table handles,
+# with the keys it requires. flow_lint.REQUIRED_KEYS is the single source of
+# truth (the contract suite asserts it stays in lockstep with the runner).
+import flow_lint as L  # noqa: E402
 for i, step in enumerate(flow.get("steps", [])):
     action = step.get("action")
-    if action not in known:
+    if action not in L.REQUIRED_KEYS:
         fails.append(f"step {i}: unknown action {action!r}")
-    # Interaction/assertion steps must carry their required field.
-    need = {
-        "open_url": "url", "click": "selector", "fill": "selector",
-        "wait_for_element": "selector", "check_visible_text": "text",
-        "check_title": "contains", "check_url": "contains",
-    }.get(action)
-    if need and need not in step:
-        fails.append(f"step {i}: {action} missing required field {need!r}")
+        continue
+    for need in L.REQUIRED_KEYS[action]:
+        if need not in step:
+            fails.append(f"step {i}: {action} missing required field {need!r}")
+# The exporter's action list must not drift ahead of (or behind) the linter.
+exporter_actions = set()
+import json, subprocess
+node = os.environ.get("NODE", "node")
+out = subprocess.run(
+    [node, "-e",
+     "console.log(JSON.stringify(require(process.argv[1]).KNOWN_ACTIONS))",
+     str(repo / "extension" / "recorder_export.js")],
+    capture_output=True, text=True)
+if out.returncode == 0:
+    exporter_actions = set(json.loads(out.stdout))
+    extra = exporter_actions - set(L.REQUIRED_KEYS)
+    if extra:
+        fails.append(f"exporter KNOWN_ACTIONS not in runner/linter: {sorted(extra)}")
+else:
+    fails.append("could not read exporter KNOWN_ACTIONS")
 
 if not flow.get("name"):
     fails.append("flow missing 'name'")

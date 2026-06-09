@@ -28,8 +28,14 @@ Interaction steps:
 |---|---|---|
 | `open_url` | `url` | `page.goto(url, wait_until=domcontentloaded)`. |
 | `click` | `selector` | `page.click(selector)`. |
-| `fill` | `selector`, `value` | `page.fill(selector, value)`. `value` supports `{{ }}`. |
+| `fill` | `selector`, `value`, `sensitive?` | `page.fill(selector, value)`. `value` supports `{{ }}`. `sensitive: true` = credential hygiene (below). |
+| `press` | `key`, `selector?` | Key press (e.g. `Enter`), on the selector or the focused element. |
+| `select_option` | `selector`, `value` | Select a `<select>` option by value, falling back to visible label. |
+| `hover` | `selector` | Mouse-over (opens hover menus). |
+| `scroll_into_view` | `selector` | Scroll the element into the viewport. |
+| `wait_ms` | `ms` | Fixed wait. Prefer `wait_for_element`/`wait_for_url`. |
 | `wait_for_element` | `selector`, `timeout_ms?` | Wait until selector is visible; clear failure if not. |
+| `wait_for_url` | `contains`, `timeout_ms?` | Wait until the URL contains a substring (post-login redirects). |
 
 Assertion steps (failure ends the flow CRIT with a clear message):
 
@@ -38,24 +44,57 @@ Assertion steps (failure ends the flow CRIT with a clear message):
 | `check_visible_text` | `text` | `Expected text '<text>' not found` |
 | `check_title` | `contains` | `Expected title to contain '<x>', got '<actual>'` |
 | `check_url` | `contains` | `Expected URL to contain '<x>', got '<actual>'` |
+| `check_element_count` | `selector`, `min?` (1) | `Expected at least <min> element(s) matching '<sel>', found <n>` |
 
 Per-step `timeout_ms` overrides the flow default.
 
-## Value substitution
+Any step may carry `optional: true`: a failing optional step is skipped instead
+of failing the flow. Use it for best-effort interactions like cookie-consent
+clicks (see [`flows/google-search.yaml`](../flows/google-search.yaml)).
 
-Any `value`/`url` may contain `{{ NAME }}` placeholders, resolved from
-environment variables at run time (GOAT-style, but env-backed — no secret store).
-Unknown placeholders resolve to empty string. Keep credentials in env / Checkmk's
-own secret mechanism; never commit them (`.env`, `*.key`, `*credentials*` are
-gitignored).
+A raw Playwright failure on a step (click timeout, bad selector) is reported as
+`CRIT - Step <N> (<action>) failed: <first error line>` — a check failure, not a
+runner error — and still triggers the failure screenshot.
+
+## Value substitution & secrets
+
+Two placeholder forms are resolved in `url`/`value` fields at run time:
+
+* **`{{ secret.NAME }}` — the right way to do credentials.** Resolved from the
+  node-local **secrets file** (`--secrets-file` / `$SYNTHMK_SECRETS_FILE`), a
+  YAML mapping that MUST be `chmod 600` and owned by the runner user — anything
+  looser is refused up front (UNKNOWN, flow never runs with blank creds).
+  A missing name is a hard UNKNOWN with no value leaked. Every resolved secret
+  value is **redacted to `***` in all service output and error messages**.
+* `{{ NAME }}` — legacy environment lookup (unknown → empty string). Fine for
+  non-secrets like base URLs.
+
+Mark credential fills `sensitive: true`: the value is registered for redaction
+even if it didn't come from the secrets file, and a later failure screenshot
+**blanks all form fields** before capture so the PNG can't leak what was typed.
+The linter warns when a fill references `{{ secret.* }}` without `sensitive: true`.
+
+Example secrets file (`/etc/synthmk/secrets.yaml`, mode 600):
+
+```yaml
+portal_user: monitor
+portal_password: a-real-password
+```
+
+Never commit secrets (`.env`, `*.key`, `*credentials*`, `lab/secrets.yaml`-style
+files outside the lab are gitignored; CI secret-scans tracked files).
 
 ## Output contract
 
 The runner emits exactly one Checkmk local-check line:
 
 ```text
-<status> "<name>" duration=<ms>ms;<warn>;<crit> <STATE> - <summary>
+<status> "<name>" duration=<ms>ms;<warn>;<crit>|step0_<action>=<ms>ms|… <STATE> - <summary>
 ```
+
+Each step contributes its own `stepN_<action>` perfdata metric, so Checkmk
+graphs where time is spent *inside* the journey (login vs. search vs. render),
+not just the total.
 
 - `status`/`STATE`: `0/OK`, `1/WARN`, `2/CRIT`, `3/UNKNOWN`.
 - A failed assertion → `2 ... CRIT - <clear message>`.
@@ -84,11 +123,14 @@ When the runner is given a screenshot base URL (`--screenshot-base-url` or
 the failing line ends with a clickable link instead of a bare path:
 
 ```text
-2 "<name>" duration=... CRIT - <message> <a href="http://<runner>:9180/<flow>-fail-step<N>.png">screenshot</a>
+2 "<name>" duration=... CRIT - <message> <a href="http://<runner>:9180/<flow>-fail-step<N>.png?t=<token>">screenshot</a>
 ```
 
-The runner-node appliance serves the `screenshots/` directory over HTTP for
-exactly this. The link only renders in the Checkmk GUI if **"Escape HTML codes
+The runner-node appliance serves screenshots through an **authenticated** HTTP
+server (`runner-node/shot_server.py`): per-file HMAC tokens signed with a
+node-local key (`$SYNTHMK_SHOT_KEY_FILE`), no directory listing, no traversal.
+The runner appends the matching `?t=` token automatically when the key file is
+readable. The link only renders in the Checkmk GUI if **"Escape HTML codes
 in service output"** is turned **Off** for the runner host (scope it narrowly —
 escaping-off is an XSS surface; SynthMK's output is always a single sanitized
 line). Without a base URL the line keeps the plain `(screenshot: <path>)` form.
@@ -104,6 +146,14 @@ host** carrying the synthetic service — one runner, many target hosts.
 
 - [`flows/example-ok.yaml`](../flows/example-ok.yaml) — passing journey.
 - [`flows/example-fail.yaml`](../flows/example-fail.yaml) — failing assertion (`Dashboard` text absent → CRIT).
+- [`flows/wikipedia-search.yaml`](../flows/wikipedia-search.yaml) — real multi-step
+  public journey (fill → press Enter → wait_for_url → asserts), verified live.
+- [`flows/google-search.yaml`](../flows/google-search.yaml) — search-engine journey
+  *template* incl. `optional: true` consent click; see its header for why Google
+  bot-blocks headless runners (use the shape on sites you own).
+- [`lab/flows/intranet-login.yaml`](../lab/flows/intranet-login.yaml) — the
+  flagship 10-step login journey: secrets file, sensitive fill, wait_for_url,
+  hover menu, select_option, element count. Runs E2E in the LAN lab.
 - [`flows/demo/index.html`](../flows/demo/index.html) — bundled stable local target page.
 
 ## Recorder
@@ -111,7 +161,19 @@ host** carrying the synthetic service — one runner, many target hosts.
 The [`extension/`](../extension/) Chrome recorder (MV3) emits these steps using
 GOAT's selector ladder (`data-testid` → stable id → unique `name` → unique class
 combo → `nth-of-type` path), so recorded selectors stay stable and directly
-compatible with this schema. Record a flow → **Export YAML** → save under
-`flows/` → run with `runner/runner.py`. The exporter is validated against this
-contract browser-free by [`extension/validate_export.sh`](../extension/validate_export.sh),
-which produces [`flows/recorded-sample.yaml`](../flows/recorded-sample.yaml).
+compatible with this schema. Record a flow → live step list (delete bad steps,
+insert assertions, set name + thresholds) → **Download .yaml** → drop in
+`flows/` + one `flows.conf` line.
+
+Credential hygiene is built in: typing into a password field records
+`{{ secret.<field> }}` + `sensitive: true` — **the typed value never leaves the
+page**; the popup tells you to add the real value to the node's secrets file.
+Enter keypresses are recorded as `press`, `<select>` changes as `select_option`.
+
+Validation is two-layer: browser-free contract
+([`extension/validate_export.sh`](../extension/validate_export.sh) →
+[`flows/recorded-sample.yaml`](../flows/recorded-sample.yaml), exporter action
+table locked to the linter's) and a real-browser E2E
+([`extension/test_e2e.py`](../extension/test_e2e.py)) that loads the extension
+in Chromium, records the lab login journey, and asserts the export lints clean
+with the secret reference intact.

@@ -50,6 +50,46 @@ Source of truth for autonomous scheduling is Clarvis
 - [x] `[SYNTHMK_POSITIONING]` README vs Robotmk; roadmap + GOAT-audit updates;
       CI lints `lab/flows/`; `make` runner-image/lab targets; VERSION 0.2.0.
 
+## v0.3.0 — enterprise hardening: secrets, scale, TLS, recorder UX
+
+- [x] `[SYNTHMK_BROWSER_AND_STEPS_EXPANSION]` [VERIFIED] press/select_option/hover/
+      scroll_into_view/wait_ms/wait_for_url/check_element_count + `optional: true`
+      steps; Playwright errors → CRIT with step name + screenshot; per-step timing
+      perfdata. → `runner/runner.py`, `runner/flow_lint.py`, 55-check contract suite.
+- [x] `[SYNTHMK_SECRET_SOURCE]` [VERIFIED] `{{ secret.NAME }}` from chmod-600
+      secrets file, refusal on loose perms, hard-UNKNOWN on missing names, global
+      output redaction, sensitive-fill screenshot masking. → `runner/secret_source.py`.
+- [x] `[SYNTHMK_SCHEDULER_POOL]` [VERIFIED] worker-pool scheduler with stagger,
+      overlap suppression, hard timeouts, hot reload, warmup lines
+      (= `SYNTHMK_FIRST_RUN_WARMUP`), `SynthMK Scheduler` self-monitoring service.
+      → `runner-node/scheduler.py`. Scale-tested: 60 flows, 37 runs/min, 0 overdue.
+- [x] `[SYNTHMK_SHOT_AUTH]` [VERIFIED] HMAC-token screenshot server, no listing,
+      traversal-safe, /healthz; runner signs links. → `runner-node/shot_server.py`.
+- [x] `[SYNTHMK_AGENT_TLS_REGISTRATION]` [VERIFIED] official version-matched agent
+      + cmk-agent-ctl TLS via one-command `register_agent.sh`; container socket
+      shim; `SYNTHMK_AGENT_MODE=official`. Live TLS pull verified vs Raw 2.3.0p48.
+- [x] `[SYNTHMK_RECORDER_UX]` [VERIFIED] live step list + delete, check settings,
+      password→`{{ secret.* }}`+sensitive (value never leaves the page), Enter→press,
+      select→select_option, MV3 state-race fix; real-browser E2E
+      (`extension/test_e2e.py`) green.
+- [x] `[SYNTHMK_PROD_DEPLOY]` hardened `runner-node/compose.yaml` (limits,
+      no-new-privileges, healthcheck, secrets mount), non-root browser execution.
+- [x] `[SYNTHMK_RESEARCH_LANDSCAPE]` competitive research folded into
+      `docs/competitive-landscape.md` (+ full reports in docs/).
+- [x] `[SYNTHMK_REAL_FLOWS]` Wikipedia (live-verified), Google template
+      (bot-block documented), lab login→dashboard journey E2E through Checkmk.
+
+### Open (v0.4 candidates — see docs/competitive-landscape.md roadmap)
+
+- [ ] `[SYNTHMK_MULTINODE_SPECIAL_AGENT]` special agent pulling several runner
+      nodes ("locations") from the Checkmk side.
+- [ ] `[SYNTHMK_REAL_MKP_CI]` Docker-gated CI job building + installing the real
+      .mkp against an ephemeral Checkmk container.
+- [ ] `[SYNTHMK_CERT_AND_LINKS_CHECKS]` cert-expiry + broken-links check types.
+- [ ] `[SYNTHMK_TRACE_ARTIFACTS]` Playwright trace.zip on failure next to PNGs.
+- [ ] `[SYNTHMK_MAX_ATTEMPTS]` retry-before-CRIT with visible attempt count.
+- [ ] `[SYNTHMK_FLOW_GROUPS]` serialized groups + lint-time interval math.
+
 ## First Acceptance Target
 
 A sample flow can be executed locally and produces output like:

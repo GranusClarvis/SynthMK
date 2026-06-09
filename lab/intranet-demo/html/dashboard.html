@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<!--
+  SynthMK lab dashboard, reachable only after login.html sets the session flag.
+  Carries the widgets the multi-step lab flow exercises: a report <select>,
+  a hover-revealed menu, and a row count.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Internal Portal — Dashboard</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; }
+    #user-menu-items { display: none; }
+    #user-menu:hover #user-menu-items { display: block; }
+    table { border-collapse: collapse; margin-top: 1rem; }
+    td, th { border: 1px solid #ccc; padding: .4rem .8rem; }
+  </style>
+</head>
+<body data-testid="dashboard">
+  <script>
+    if (sessionStorage.getItem('synthmk-lab-session') !== '1') {
+      window.location.href = 'login.html';
+    }
+  </script>
+  <h1>Dashboard</h1>
+  <p data-testid="welcome">Signed in as monitor</p>
+
+  <nav id="user-menu">
+    <span>Account ▾</span>
+    <ul id="user-menu-items">
+      <li><a href="#" data-testid="menu-profile">Profile</a></li>
+      <li><a href="#" data-testid="menu-signout">Sign out</a></li>
+    </ul>
+  </nav>
+
+  <label>Report period
+    <select id="report-period">
+      <option value="day">Today</option>
+      <option value="week">This week</option>
+      <option value="month">This month</option>
+    </select>
+  </label>
+
+  <table data-testid="orders">
+    <tr><th>Order</th><th>Status</th></tr>
+    <tr class="order-row"><td>#1001</td><td>shipped</td></tr>
+    <tr class="order-row"><td>#1002</td><td>processing</td></tr>
+    <tr class="order-row"><td>#1003</td><td>shipped</td></tr>
+  </table>
+</body>
+</html>

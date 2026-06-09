@@ -26,10 +26,17 @@ SynthMK aims at the gap underneath it:
 | Authoring | RF keyword DSL / `.robot` | readable YAML + Chrome recorder |
 | Edition | enterprise / commercial | works on **Raw/CRE (free)** |
 | Integration | deep (bakery, dedicated services) | agent **local check** (drop-in) |
+| Credentials | secret env vars (plaintext in agent config) | node-local 0600 secrets file, `{{ secret.NAME }}`, output-redacted |
 | Footprint | a platform | one script + one container |
 
-If you run **Checkmk Raw at home** and want *"is my login flow still working?"*
-as a normal service — without Robot Framework or a paid tier — that's SynthMK.
+If you run **Checkmk Raw** and want *"is my login flow still working?"* as a
+normal service — without Robot Framework or a paid tier — that's SynthMK.
+v0.3.0 is the hardening release: secure login credentials end to end, a
+worker-pool scheduler measured at 60 flows on one node, an authenticated
+screenshot server, an optional TLS agent transport, and a recorder that never
+sees your passwords. Test evidence: [`docs/STATUS.md`](docs/STATUS.md) ·
+capacity math: [`docs/scaling.md`](docs/scaling.md) · how we compare:
+[`docs/competitive-landscape.md`](docs/competitive-landscape.md).
 
 ## MVP Components
 

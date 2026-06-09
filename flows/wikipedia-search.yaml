@@ -1,0 +1,25 @@
+# Real-world multi-step journey: Wikipedia search.
+# Exercises: open_url -> fill -> press(Enter) -> wait_for_url -> assertions.
+# A good template for "search something, land on the right page" checks.
+name: Synthetic Wikipedia Search
+timeout_ms: 30000
+warn_ms: 8000
+crit_ms: 20000
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: https://en.wikipedia.org/wiki/Main_Page
+  - action: wait_for_element
+    selector: "input#searchInput"
+  - action: fill
+    selector: "input#searchInput"
+    value: Synthetic monitoring
+  - action: press
+    selector: "input#searchInput"
+    key: Enter
+  - action: wait_for_url
+    contains: Synthetic_monitoring
+  - action: check_title
+    contains: Synthetic monitoring
+  - action: check_visible_text
+    text: synthetic monitoring

@@ -4,6 +4,85 @@ All notable changes to SynthMK are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); SynthMK uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] — enterprise hardening: secrets, scale, TLS, recorder UX
+
+The "trust it with production checks" release: secure credentials end to end,
+a scheduler measured at 60 flows on one node, an authenticated screenshot
+server, a TLS agent transport, and a recorder that never sees your passwords.
+Everything below verified live against Checkmk Raw 2.3.0p48 (see
+`docs/STATUS.md` for the test evidence).
+
+### Added
+- **Secret store for login flows** (`runner/secret_source.py`):
+  `{{ secret.NAME }}` resolves from a node-local YAML secrets file
+  (`--secrets-file` / `$SYNTHMK_SECRETS_FILE`) that must be chmod 600 — looser
+  permissions are refused before the browser ever launches. Missing secrets are
+  a hard UNKNOWN with no value leaked; **every resolved value is redacted to
+  `***` in all service output**. `sensitive: true` fills additionally blank all
+  form fields before a failure screenshot is captured.
+- **Expanded step vocabulary**: `press`, `select_option`, `hover`,
+  `scroll_into_view`, `wait_ms`, `wait_for_url`, `check_element_count`, and
+  `optional: true` on any step (cookie-consent clicks). Raw Playwright errors
+  (click timeout, bad selector) now surface as `CRIT - Step N (<action>)
+  failed: …` with screenshot instead of UNKNOWN.
+- **Per-step timing perfdata**: every service line carries
+  `stepN_<action>=<ms>ms` metrics — Checkmk graphs where time goes inside the
+  journey.
+- **Worker-pool scheduler** (`runner-node/scheduler.py`, replaces the bash
+  loop): `SYNTHMK_MAX_CONCURRENCY` (default 4), startup stagger, overlap
+  suppression, hard per-run timeout, hot config reload, **warmup lines** (every
+  flow is discoverable under its real service name immediately at node start),
+  and a **`SynthMK Scheduler` self-monitoring service** that WARNs on the node
+  when flows go overdue. Measured: 60 flows / 37 runs/min sustained on default
+  sizing with zero overdue (docs/scaling.md).
+- **Authenticated screenshot server** (`runner-node/shot_server.py`, replaces
+  `python -m http.server`): per-file HMAC token URLs signed with an
+  auto-generated 0600 node key, no directory listing, traversal-safe, PNG-only,
+  `/healthz` endpoint (wired as the container HEALTHCHECK). The runner appends
+  matching `?t=` tokens to screenshot links automatically.
+- **TLS agent transport** (`runner-node/register_agent.sh`,
+  `SYNTHMK_AGENT_MODE=official`): one command downloads the site's
+  version-matched agent .deb, installs it, and registers `cmk-agent-ctl`;
+  the entrypoint provides the agent socket in containers (no systemd needed).
+  Verified live: TLS pull with site-CA certificate, spool sections intact.
+- **Recorder extension UX overhaul**: live editable step list with per-step
+  delete, check settings (service name, WARN/CRIT thresholds, screenshot
+  toggle) persisted across popup opens, name-derived download filename — and
+  **credential hygiene**: typing into a password field records
+  `{{ secret.<field> }} + sensitive: true`; the typed value never leaves the
+  page. Enter keypresses → `press`, `<select>` → `select_option`. New
+  real-browser E2E (`extension/test_e2e.py`) loads the extension in Chromium,
+  records the lab login journey and asserts the export lints clean. Fixed an
+  MV3 state race that could drop a recorded step when two events landed
+  back-to-back.
+- **Production deployment template** (`runner-node/compose.yaml`): resource
+  limits sized to the pool, `no-new-privileges`, healthcheck, secrets mount,
+  named volumes incl. TLS registration state.
+- **Real-world example flows**: `flows/wikipedia-search.yaml` (verified live),
+  `flows/google-search.yaml` (consent-click template + documented bot-block
+  caveat), and the lab's flagship 10-step `intranet-login.yaml` (secrets,
+  hover, select, element count) against a new multi-page demo app
+  (login → dashboard).
+- **Scale test harness** (`scripts/scale_test.sh`) + capacity formula and
+  measured results (`docs/scaling.md`).
+- **Competitive research** (`docs/competitive-landscape.md` + full reports):
+  what v0.3 adopts from New Relic, Checkly, Grafana SM, Robotmk, Elastic — and
+  what it deliberately rejects.
+
+### Changed
+- **Browser/HTTP processes run as the unprivileged `pwuser`** in the appliance
+  (entrypoint drops from root via setpriv); bind-mounted secrets are staged to
+  a runner-owned 0600 copy at start.
+- The linter knows all new actions/fields and warns when a fill references
+  `{{ secret.* }}` without `sensitive: true`; the recorder exporter's action
+  table is asserted against the linter's in CI.
+
+### Security
+- Closes v0.2 STATUS.md findings #1 (screenshot credential capture — masked),
+  #2 (open screenshot server — token auth), #3 (plaintext agent — TLS path),
+  #4 (env-only secrets — permission-checked file + redaction), #6/#7 (no
+  limits / root browser — shipped limits + privilege drop).
+
 ## [0.2.0] — LAN runner node, real MKP, screenshots
 
 Makes SynthMK deployable in a real LAN: one runner node inside the intranet runs

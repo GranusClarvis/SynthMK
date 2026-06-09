@@ -9,8 +9,8 @@ able to reach), and exposes the results to Checkmk like any monitored host.
    ┌───────────────┐        ┌──────────────────────────────┐
    │  Checkmk      │  6556  │  synthmk-runner (this node)   │
    │  server       │◀───────│   • scheduler runs flows      │──▶ http://intranet-wiki
-   │  (Raw/CRE)    │        │   • spool dir → agent output  │──▶ http://intranet-grafana
-   └───────────────┘        │   • :9180 serves screenshots  │──▶ http://internal-app
+   │  (Raw/CRE)    │  (TLS  │   • spool dir → agent output  │──▶ http://intranet-grafana
+   └───────────────┘  opt.) │   • :9180 screenshots (auth)  │──▶ http://internal-app
                             └──────────────────────────────┘
 ```
 
@@ -18,81 +18,101 @@ able to reach), and exposes the results to Checkmk like any monitored host.
 
 | Component | File | Role |
 |---|---|---|
-| Agent transport | `agent_output.sh` + socat | Answers Checkmk polls on `6556`; emits `<<<check_mk>>>` + fresh spool sections. |
-| Scheduler | `synthmk-scheduler.sh` | Runs each flow on its own interval → Checkmk **spool dir** (slow checks never block fast ones). Prunes old screenshots. |
-| Screenshot server | `python -m http.server` | Serves `screenshots/` on `9180` so failing services can link the PNG. |
-| Schedule | `flows.conf` | `flow_file interval_s [checkmk_host]` per line — the scaling surface. |
+| Agent transport | socat + `agent_output.sh` (lab) **or** official Checkmk agent over TLS (production, see below) | Answers Checkmk polls on `6556` with `<<<check_mk>>>` + fresh spool sections. |
+| Scheduler | `scheduler.py` | Worker-pool scheduler (`SYNTHMK_MAX_CONCURRENCY`, default 4): per-flow intervals → Checkmk **spool dir**, startup stagger, overlap suppression, hard run timeout, warmup lines, screenshot pruning, and a **`SynthMK Scheduler` self-monitoring service** that WARNs when the node is oversubscribed. See [`../docs/scaling.md`](../docs/scaling.md). |
+| Screenshot server | `shot_server.py` | Serves failure PNGs on `9180` with **per-file HMAC token URLs** (node-local key, auto-created 0600). No directory listing, no traversal, `/healthz` for container healthchecks. `SYNTHMK_SHOT_AUTH=off` only if you really want the old open behavior. |
+| Schedule | `flows.conf` | `flow_file interval_s [checkmk_host]` per line — the scaling surface. Hot-reloaded on change. |
+| Secrets | mounted file → `$SYNTHMK_SECRETS_FILE` | YAML mapping for `{{ secret.* }}` refs; chmod 600 on the host; the entrypoint stages a runner-owned copy so bind-mount ownership doesn't matter. Values are redacted from all output. |
+| TLS upgrade | `register_agent.sh` | One command: downloads YOUR site's version-matched agent, installs it, registers `cmk-agent-ctl` (TLS). Then run with `SYNTHMK_AGENT_MODE=official`. |
 
-## Run it
+Privilege model: the container may start as root (volume chown + official agent
+daemon), but the **scheduler, browsers, and HTTP servers all run as the
+unprivileged `pwuser`** — a compromised page never executes as root. Chromium
+still runs `--no-sandbox` inside the container (standard for Chromium-in-Docker);
+treat flow targets as trusted.
+
+## Run it (production template)
+
+Use [`compose.yaml`](compose.yaml) — it carries the hardened defaults (resource
+limits sized to the concurrency, `no-new-privileges`, healthcheck, named
+volumes):
 
 ```bash
-# build (context = repo root)
-docker build -f runner-node/Dockerfile -t synthmk-runner:0.2.0 .
+cp runner-node/compose.yaml /srv/synthmk/compose.yaml   # edit the EDIT: lines
+docker compose up -d
+```
 
+Or raw `docker run`:
+
+```bash
+docker build -f runner-node/Dockerfile -t synthmk-runner:$(cat VERSION) .
 docker run -d --name synthmk-runner \
   -p 6556:6556 -p 9180:9180 \
+  --memory 6g --cpus 4 --shm-size 1g --security-opt no-new-privileges \
   -v "$PWD/flows:/opt/synthmk/flows:ro" \
   -v "$PWD/runner-node/flows.conf:/opt/synthmk/runner-node/flows.conf:ro" \
+  -v "$PWD/secrets.yaml:/run/synthmk/secrets.yaml:ro" \
+  -e SYNTHMK_SECRETS_FILE=/run/synthmk/secrets.yaml \
   -e SYNTHMK_SHOT_BASE_URL="http://<this-node-lan-ip>:9180" \
-  synthmk-runner:0.2.0
+  synthmk-runner:$(cat VERSION)
 ```
 
 Then in Checkmk: add a host with the node's IP, monitored via **Checkmk agent
-(TCP, port 6556)**, and run service discovery. Each flow becomes a service; a
-flow with a `checkmk_host` lands under that target host (see piggyback below).
+(TCP, port 6556)**, and run service discovery. Every configured flow is
+discoverable immediately (warmup lines carry the real service names); each flow
+becomes a service, plus the `SynthMK Scheduler` health service. A flow with a
+`checkmk_host` lands under that target host (piggyback, below).
+
+## Production transport: official agent over TLS
+
+The socat transport is plaintext and unauthenticated — fine on a trusted lab
+segment with `6556` firewalled to the Checkmk server, not fine beyond that.
+Upgrade to the official, version-matched Checkmk agent + TLS controller
+(verified against Checkmk Raw 2.3):
+
+```bash
+# 1. one-time registration (host must already exist in Checkmk):
+docker exec -e CMK_PASSWORD=... synthmk-runner \
+  bash /opt/synthmk/runner-node/register_agent.sh \
+  --server cmk.example.lan:8000 --site mysite --user automation --host synthmk-runner
+
+# 2. restart with the official transport (keep a volume on /var/lib/cmk-agent):
+#    SYNTHMK_AGENT_MODE=official   (see compose.yaml)
+```
+
+The official agent serves the same spool dir natively, so scheduler output is
+unchanged — only the transport hardens. (In containers the entrypoint provides
+the agent socket via socat, replacing systemd socket activation.)
 
 ## Scaling
 
-Add a flow file under `flows/` and a line to `flows.conf`. The scheduler runs
-each flow independently on its interval and publishes atomically to the spool
-dir, so adding long or numerous checks never delays collection. `maxage` is set
-to `interval × 3`: if a flow stops producing, Checkmk marks the service stale
-rather than showing a stale-but-green result.
+Add a flow file under `flows/` and a line to `flows.conf` (hot-reloaded).
+`maxage` = `interval × 3`: if a flow stops producing, Checkmk marks the service
+stale rather than showing stale-but-green. Capacity formula, knobs, and measured
+60-flow results: [`../docs/scaling.md`](../docs/scaling.md).
 
 ## Piggyback (one node, many target hosts)
 
 Set `checkmk_host:` in a flow (or the 3rd column in `flows.conf`) and the result
 is wrapped in a Checkmk piggyback envelope, so the **monitored site appears as
 its own Checkmk host** carrying the synthetic service — instead of every check
-hanging off the runner node. Create those target hosts in Checkmk (IP can be a
-dummy / no direct checks) to receive the piggyback data.
+hanging off the runner node. Create those target hosts in Checkmk (no-IP /
+no-agent is fine) to receive the piggyback data.
 
 ## Screenshots
 
-On a failing step (with `screenshot_on_failure: true`) the runner saves a PNG to
-`screenshots/` and the service line links it via `SYNTHMK_SHOT_BASE_URL`. The
-link only renders if **Setup → … → "Escape HTML codes in service output"** is
-**Off** for the runner host. Scope that rule to this host only — disabling HTML
-escaping broadly is an XSS surface (Werk #6058). SynthMK output is always a
-single sanitized line containing only the link it generated.
+On a failing step (with `screenshot_on_failure: true`) the runner saves a PNG
+and the service line links it via `SYNTHMK_SHOT_BASE_URL`, including the
+per-file access token. The link only renders if **"Escape HTML codes in service
+output"** is **Off** for the runner host — scope that rule to this host only
+(escaping-off is an XSS surface, Werk #6058; SynthMK output is always a single
+sanitized line). **Credential flows:** screenshots taken after a
+`sensitive: true` fill blank all form fields before capture; values from the
+secrets file are additionally redacted from service output.
 
-## Security (read before exposing beyond a trusted LAN)
+## Security summary
 
-The appliance defaults favor home-lab simplicity. Before any wider exposure, see
-the full review in [`../docs/STATUS.md`](../docs/STATUS.md) §5. The must-fix set:
-
-- **Screenshots can capture secrets/PII** (a failed *login* flow screenshots a
-  page whose DOM may hold the typed password). Disable `screenshot_on_failure`
-  for credential flows.
-- **The screenshot server (`:9180`) and agent transport (`:6556`) are
-  unauthenticated and unencrypted.** Firewall both to the Checkmk server only;
-  the screenshot dir is otherwise world-readable to anyone who can reach the node.
-- **Secrets are env-backed only** (no vault); container runs **root + Chromium
-  `--no-sandbox`** — only point flows at trusted internal sites.
-
-## Production hardening: the real Checkmk agent
-
-The bundled socat transport is dependency-free and version-agnostic, ideal for
-the LAN lab and most home setups. For TLS-encrypted, registered agent comms,
-install the **version-matched** official Checkmk agent in the image and register
-the controller instead:
-
-```bash
-# inside the image / a derived image, with the agent .deb from YOUR site:
-dpkg -i check-mk-agent_<ver>.deb
-cmk-agent-ctl register --server <cmk-host> --site <site> \
-    --user automation --password <secret> --hostname synthmk-runner
-```
-
-Keep the scheduler + spool dir exactly as-is; the official agent reads the same
-spool directory, so only the transport changes.
+v0.3.0 closes the v0.2 must-fix set: authenticated screenshots, TLS agent path,
+non-root browser execution, permission-checked secret store with output
+redaction, resource limits in the shipped compose. Remaining residual risks and
+operator duties: [`../docs/STATUS.md`](../docs/STATUS.md) §5.

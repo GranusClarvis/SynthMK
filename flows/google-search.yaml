@@ -1,0 +1,37 @@
+# Real-world multi-step journey TEMPLATE: Google search.
+# Exercises: open_url -> optional consent click -> fill -> press(Enter) -> asserts.
+#
+# CAVEAT (verified 2026-06): Google (and other public search engines) actively
+# bot-block headless browsers from datacenter IPs with a reCAPTCHA "unusual
+# traffic" page, so this flow will go CRIT from most server networks — that is
+# Google policy, not a SynthMK defect. Use it as the *shape* for journeys on
+# sites you own; for a public-site example that works headless today, see
+# flows/wikipedia-search.yaml (verified live).
+name: Synthetic Google Search
+timeout_ms: 30000
+warn_ms: 8000
+crit_ms: 20000
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: https://www.google.com/
+  - action: click
+    selector: "button#L2AGLb"   # EU/CH consent dialog "Accept all" (id is locale-stable)
+    optional: true              # absent outside consent regions -> skipped
+    timeout_ms: 5000
+  - action: wait_for_element
+    selector: "textarea[name='q']"
+  - action: fill
+    selector: "textarea[name='q']"
+    value: Checkmk synthetic monitoring
+  - action: press
+    selector: "textarea[name='q']"
+    key: Enter
+  - action: wait_for_element
+    selector: "#search"
+    timeout_ms: 15000
+  - action: check_element_count
+    selector: "#search a"
+    min: 3
+  - action: check_visible_text
+    text: Checkmk

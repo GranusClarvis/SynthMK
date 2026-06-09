@@ -1,6 +1,6 @@
 # SynthMK — Status, Test Evidence, Open Work & Security
 
-**As of:** 2026-06-09 · **Version:** 0.2.0 · **Branch/commit:** `main` @ `bf344b5`
+**As of:** 2026-06-09 · **Version:** 0.3.0 · **Branch:** `main`
 **Repo:** `git@github.com:GranusClarvis/SynthMK.git` (standalone)
 
 This is the living "where things stand" doc. Roadmap tags below mirror the Clarvis
@@ -14,61 +14,63 @@ Readable YAML browser flow → Playwright runner → native Checkmk **local-chec
 service. Lightweight, Raw/CRE-friendly alternative to Checkmk's enterprise
 Synthetic Monitoring (Robotmk / Robot Framework). One **runner node** hosted
 inside the intranet runs many flows against internal-only sites and reports to
-Checkmk; Checkmk is the UI, scheduler-of-record, and alerting engine.
+Checkmk; Checkmk is the UI, scheduler-of-record, and alerting engine. A Chrome
+MV3 recorder turns clicks into flows. Positioning vs. the field:
+[competitive-landscape.md](competitive-landscape.md).
 
 ---
 
-## 2. What was done in v0.2.0
+## 2. What was done in v0.3.0 (enterprise hardening)
 
-- **Runner-node Docker appliance** (`runner-node/`): scheduler runs each flow on
-  its own interval into the Checkmk **spool dir** (slow browser runs never block
-  agent polls — the scaling mechanism), socat **agent transport** on `6556`,
-  **screenshot HTTP server** on `9180`. Config via `flows.conf`
-  (`flow_file interval_s [checkmk_host]`).
-- **Piggyback** (`checkmk/piggyback_wrap.sh`, flow `checkmk_host:`): one runner →
-  each monitored site appears as its **own Checkmk host**. Default = flat service
-  on the runner.
-- **Clickable failure screenshots**: `runner.py --screenshot-base-url` /
-  `$SYNTHMK_SHOT_BASE_URL` → `<a href>` link to the node-served PNG.
-- **Dynamic Checkmk state**: `state_mode: dynamic` / `--p-state` emits `P` and
-  lets Checkmk threshold `duration`; failures stay an explicit digit.
-- **Real, installable MKP** (`packaging/make_real_mkp.sh`, `make real-mkp`):
-  genuine `info`+`info.json`+`agents.tar` via a running site's own `mkp` tool.
-  `build_mkp.sh` remains the deterministic skeleton for CI checksums.
-- **Self-hosted LAN lab** (`lab/`): Checkmk Raw + runner + internal-only nginx
-  demo. Docs: `docs/lan-quickstart.md`, `docs/architecture.md`.
-- **Positioning + hygiene**: README "vs Robotmk" section; recorder wording fixed;
-  flow linter validates `state_mode`/`checkmk_host`; CI lints `lab/flows/`;
-  `make` gains `real-mkp` / `runner-image` / `lab-up` / `lab-down`; VERSION 0.2.0.
-
----
+- **Secure credentials end to end**: `{{ secret.NAME }}` from a chmod-600
+  node-local secrets file (loose perms refused up front), values redacted to
+  `***` in all output, `sensitive: true` fills blank form fields before failure
+  screenshots; recorder converts password fields to secret refs so typed values
+  never leave the page.
+- **Scale**: Python worker-pool scheduler (concurrency cap, stagger, overlap
+  suppression, hard timeouts, hot reload, warmup lines under real service
+  names) + `SynthMK Scheduler` self-monitoring service + capacity formula and a
+  measured 60-flow scale test ([scaling.md](scaling.md)).
+- **Node security**: token-authenticated screenshot server (HMAC per-file URLs,
+  no listing/traversal), TLS agent transport via one-command registration
+  (`register_agent.sh` + `SYNTHMK_AGENT_MODE=official`), browser/HTTP processes
+  dropped to `pwuser`, hardened production compose (limits,
+  no-new-privileges, healthcheck).
+- **Flows**: `press`, `select_option`, `hover`, `scroll_into_view`, `wait_ms`,
+  `wait_for_url`, `check_element_count`, `optional: true` (consent banners);
+  per-step timing perfdata; Playwright errors → named-step CRIT + screenshot.
+- **Examples**: Wikipedia multi-step journey (live-verified), Google template
+  with documented bot-block reality, lab login→dashboard journey with secrets.
+- **Recorder UX**: live editable step list, thresholds/name settings, secret
+  hints, real-browser E2E; MV3 state race fixed (dropped-step bug).
 
 ## 3. What was tested (and the result)
 
-Verified against **Checkmk Raw 2.3.0p48** (`cmk-mkp-tool 0.2.0`) in Docker:
+All verified 2026-06-09 against **Checkmk Raw 2.3.0p48** in the LAN lab:
 
 | Test | Result |
 |---|---|
-| `make ci` (browser/Docker-free contract) | ✅ green — 27 contract checks, 6 flows lint clean, all 11 shell scripts shellcheck-clean, deterministic skeleton rebuild, secret scan, version consistency |
-| Real Chromium runs a flow against the **internal-only** demo site | ✅ OK with real durations (~230–290 ms) |
-| Service discovery in Checkmk | ✅ `Synthetic Intranet Home` (flat) + `Synthetic Account Overview` (piggyback) discovered |
-| **Live OK** in Checkmk (both flat + piggyback host) | ✅ `state=0` via REST/livestatus |
-| **Live CRIT** propagation (flat host) | ✅ `state=2`, message `Expected text … not found`, screenshot link in plugin output |
-| CRIT + screenshot at runner/spool level (piggyback) | ✅ piggyback-wrapped CRIT section + PNG written |
-| Screenshot served over HTTP | ✅ `GET /<file>.png → HTTP 200`, ~18 KB |
-| Internal-only path | ✅ demo site reachable only from the runner (no published host port) |
-| Real `.mkp` build + install | ✅ `make real-mkp` builds + installs on the site (11 files, "Enabled (active)"); idempotent across runs |
+| `make ci` (browser/Docker-free contract) | ✅ green — see CI section in repo |
+| Contract suite (`runner/test_contract.py`) | ✅ 55 checks: line format, per-step perfdata, secret load/refusal/redaction, lint lockstep for all 14 actions, optional steps |
+| 10-step lab login journey (secrets, hover, select, count) | ✅ OK in 406 ms standalone; ✅ live OK as `Synthetic Portal Login` on piggyback host `intranet-demo` |
+| Live CRIT → recovery cycle through Checkmk | ✅ broke the dashboard → `state=2`, message **redacted** (`'Signed in as ***'`), tokenized screenshot link in plugin output → restored → back to OK |
+| Screenshot auth | ✅ link `?t=<hmac>` → HTTP 200; same URL without token → 403; traversal/listing/key-file → 404 |
+| Sensitive-fill screenshot masking | ✅ captured PNG shows `•••` in both form fields |
+| Secrets negative paths | ✅ 0644 file refused (UNKNOWN, "chmod 600"); missing secret name → UNKNOWN without value; assertion text never substitutes secrets |
+| Warmup / discovery | ✅ node start publishes per-flow warmup lines under real service names; discovery `fix_all` lands all services incl. `SynthMK Scheduler` |
+| **TLS agent transport** | ✅ `register_agent.sh` against the lab site (version-matched .deb download → install → register), `cmk-agent-ctl status` = pull-agent with site-CA cert, `cmk -d` over TLS returns spool sections incl. tokenized screenshot links |
+| **Scale: 60 flows on one default node** | ✅ 5-min soak: 60/60 fresh OK, 0 stale/overdue/overlap-skips, ≈37 runs/min sustained (matches formula), slowest run 0.6 s, agent poll < 0.5 s, CPU 12–25 % of 4-core budget |
+| Recorder real-browser E2E | ✅ extension loaded in Chromium, recorded the login journey: password → `{{ secret.password }}`+sensitive (typed value nowhere), Enter → press, select → select_option, popup list renders, export lints clean |
+| Public internet journey | ✅ Wikipedia search flow live OK (807 ms, 7 steps). Google/DuckDuckGo: bot-blocked (reCAPTCHA / duck-CAPTCHA) from datacenter IP — documented as expected in `flows/google-search.yaml` |
+| Real `.mkp` | ✅ rebuilt + installed for 0.3.0 (see §6 evidence note) |
 
 ### Not yet tested / assumptions
-- **Only Checkmk Raw 2.3** (and only the plaintext socat transport). Not tested on
-  2.2 or against the TLS agent controller, CEE/bakery, or distributed sites.
-- **Only Chromium.** Firefox/Edge untested.
-- **`P`/dynamic state** unit-tested at the line level; not yet observed end-to-end
-  driving WARN/CRIT inside Checkmk from duration alone.
-- **Scale** is by design (spool dir, independent intervals) but not load-tested
-  with dozens of concurrent long flows; no resource limits set (see security #6).
-- Real-MKP build is **not byte-deterministic** (Checkmk's packer embeds
-  timestamps) — expected; that's why `build_mkp.sh` stays the deterministic one.
+- Only Checkmk Raw 2.3; not 2.2/2.4, CEE/bakery, or distributed sites.
+- Only Chromium. Firefox/Edge untested.
+- TLS mode soaked minutes, not weeks; registration persistence across container
+  recreation relies on the `/var/lib/cmk-agent` volume (documented, not soaked).
+- Scale test used short intranet flows; long-journey saturation is computed
+  (formula) not yet empirically swept.
 
 ---
 
@@ -76,50 +78,52 @@ Verified against **Checkmk Raw 2.3.0p48** (`cmk-mkp-tool 0.2.0`) in Docker:
 
 | Pri | Tag | Summary |
 |---|---|---|
-| P1 | `SYNTHMK_AGENT_TLS_REGISTRATION` | Bake version-matched official Checkmk agent + `cmk-agent-ctl` (TLS, registered) as the production transport; keep socat as lab fallback. |
-| P1 | `SYNTHMK_SECRET_SOURCE` | File/vault-backed secret source for `{{ }}` so login creds aren't plain env (see security #2). |
-| P2 | `SYNTHMK_FIRST_RUN_WARMUP` | First run emits UNKNOWN fallback name → bad early discovery; emit a discoverable "warming up" line under the intended service name. |
-| P2 | `SYNTHMK_MULTINODE_SPECIAL_AGENT` | Multi-node "locations": a Checkmk special agent pulling results from several runner-node HTTP endpoints. |
+| P2 | `SYNTHMK_MULTINODE_SPECIAL_AGENT` | Multi-node "locations": special agent pulling several runner nodes from the Checkmk side. |
 | P2 | `SYNTHMK_REAL_MKP_CI` | Docker-gated CI job that builds + installs the real `.mkp` against an ephemeral Checkmk container. |
-| P3 | `SYNTHMK_BROWSER_AND_STEPS_EXPANSION` | Firefox/Edge + new step types (select, network-idle, screenshot-always, visual diff). |
-
-Other backlog (not yet ticketed): healthcheck for the appliance; per-flow
-concurrency cap; structured per-step result drill-down; recorder selector-repair.
+| P3 | `SYNTHMK_CERT_AND_LINKS_CHECKS` | Cert-expiry + broken-links check types (cheap, loved — New Relic lesson). |
+| P3 | `SYNTHMK_TRACE_ARTIFACTS` | Playwright trace.zip on failure, served next to screenshots. |
+| P3 | `SYNTHMK_MAX_ATTEMPTS` | Retry-before-CRIT with visible attempt count. |
+| P3 | `SYNTHMK_FLOW_GROUPS` | Serialized flow groups + lint-time interval math. |
 
 ---
 
-## 5. Security considerations
+## 5. Security posture (v0.3.0)
 
-SynthMK is built for **trusted internal monitoring**, and several defaults trade
-hardening for home-lab simplicity. The items below are the ones to fix before any
-exposure beyond a trusted LAN segment.
+v0.2's must-fix set is closed: **#1** screenshots after sensitive fills are
+masked + values redacted; **#2** screenshot server requires per-file HMAC
+tokens, no listing/traversal; **#3** TLS agent transport available and
+verified (socat stays as the explicitly-labelled lab fallback — firewall 6556
+to the Checkmk server if you use it); **#4** secrets in a permission-checked
+0600 file with global output redaction (env `{{ }}` remains for non-secrets);
+**#6** shipped compose carries mem/cpu limits + no-new-privileges; **#7**
+browsers run as unprivileged `pwuser`.
 
-| # | Severity | Issue | Mitigation / status |
+Residual / operator duties:
+
+| # | Severity | Item | Status |
 |---|---|---|---|
-| 1 | **High** | **Screenshots can capture secrets/PII.** A login flow that fails *after* filling credentials screenshots a page whose DOM may contain the typed password / session data / sensitive content. | Disable `screenshot_on_failure` for credential flows, or capture before sensitive input. **Open** — no redaction yet. |
-| 2 | **High** | **Screenshot server is unauthenticated + open.** `python -m http.server` on `9180` serves the whole `screenshots/` dir with directory listing; anyone who can reach the node reads every screenshot (see #1). No TLS, no auth. | Bind to localhost + reverse-proxy with auth, or put `9180` on a restricted segment, or disable when unused. **Open.** Lab publishes `9180` to the host on purpose for the demo. |
-| 3 | **High** | **Agent transport is plaintext + unauthenticated.** socat on `6556` returns agent output (incl. internal URLs, service structure) to *any* TCP client on the segment; no TLS, no registration. | `SYNTHMK_AGENT_TLS_REGISTRATION` (official agent + `cmk-agent-ctl` TLS). Until then, firewall `6556` to the Checkmk server only. **Open.** |
-| 4 | **Medium** | **Secrets via env / `flows.conf`.** `{{ }}` resolves from environment only; creds live in env vars (visible in `/proc`, `docker inspect`) — no vault. | `.env`/`*.key`/`*credentials*` are gitignored and CI secret-scans tracked files. Proper fix = `SYNTHMK_SECRET_SOURCE`. **Open.** |
-| 5 | **Medium** | **HTML-escaping disabled for screenshot links** is an XSS surface in the Checkmk GUI (Werk #6058; advisory SBA-ADV-20250729-01). | Scope the "Escape HTML codes in service output = Off" rule to the runner host(s) only; SynthMK emits a single sanitized one-line output containing only the link it generated. **Documented**, operator must scope. |
-| 6 | **Medium** | **No resource limits / no run isolation.** Container has no CPU/mem limits; a runaway or flood of flows can exhaust the host; runner executes whatever URLs the flows name (internal SSRF-style reach is the *intended* feature but also the risk if flows are attacker-controlled). | Set compose `deploy.resources` / `--memory`; treat `flows/` + `flows.conf` as trusted, operator-only inputs (don't accept untrusted flow submissions). **Open.** |
-| 7 | **Medium** | **Container runs as root; Chromium with `--no-sandbox`.** Needed for Chromium-in-Docker, but root + no-sandbox is risky if a flow ever visits an untrusted/compromised page (RCE surface in the browser). | Only point flows at trusted internal sites; consider a non-root user + seccomp; keep Playwright/Chromium patched. **Open.** |
-| 8 | **Low** | **Lab uses a hardcoded admin password** (`synthmk-lab-admin`) and publishes the Checkmk UI on `8080`. | Lab/demo only — never reuse for a real site. Change `CMK_PASSWORD` and restrict ports for anything persistent. **Documented.** |
-| 9 | **Low** | **Supply chain.** Appliance pulls `mcr.microsoft.com/playwright/python` + pins `playwright==1.49.0`; MKP ships runner code. | Pin/scan base image digests; review MKP contents (`mkp inspect`) before distributing. **Partial** (version pinned, not digest-pinned). |
-
-**Net:** safe on a trusted LAN segment with `6556`/`9180` firewalled to the
-Checkmk server and screenshots disabled for credential flows. Items #1–#3 are the
-must-fix set before any wider exposure.
+| 1 | Medium | Chromium runs `--no-sandbox` inside the container (standard for Docker; privilege-dropped to pwuser). Point flows only at trusted sites; keep the image updated. | Accepted, documented |
+| 2 | Medium | "Escape HTML codes in service output" must be Off for screenshot links — scope that rule to runner host(s) only (Werk #6058 XSS surface). | Documented, operator must scope |
+| 3 | Low | socat lab transport is plaintext — lab/firewalled use only; production = `SYNTHMK_AGENT_MODE=official`. | Documented |
+| 4 | Low | Lab hardcodes `synthmk-lab-admin` + lab-only demo credentials in-repo. Never reuse outside the lab. | Documented |
+| 5 | Low | Supply chain: base image pinned by version, not digest; review MKP contents before distributing. | Partial |
 
 ---
 
 ## 6. Operational notes / gotchas
 
-- **Clean lab cycle:** `make lab-down && make lab-up`. Do **not** bring the lab up
-  while git is rewriting the working tree — bind mounts go stale (empty `flows/`,
-  nginx 403). Discover services **after** the first browser run completes (else
-  discovery captures the `SynthMK <file>.yaml` UNKNOWN fallback names; re-discover
-  to fix).
-- **Screenshot links across the LAN:** set `SYNTHMK_SHOT_BASE_URL=http://<lan-ip>:9180`
-  (compose default is `localhost`, only clickable on the lab host).
+- **Clean lab cycle:** `make lab-down && make lab-up`. Don't bring the lab up
+  mid-git-rewrite (stale bind mounts). Services are discoverable immediately
+  now (warmup lines) — the old "discover only after first run" gotcha is gone.
+- **Secrets in the appliance:** mount your 600-mode file and set
+  `SYNTHMK_SECRETS_FILE`; the entrypoint stages a runner-owned copy so host
+  uid/ownership doesn't matter.
+- **Screenshot links across the LAN:** set `SYNTHMK_SHOT_BASE_URL=http://<lan-ip>:9180`;
+  links carry their own tokens.
+- **TLS mode:** host must exist in Checkmk first; keep a volume on
+  `/var/lib/cmk-agent`; `register_agent.sh` needs the agent receiver port
+  (default 8000) reachable.
 - **Real MKP** needs a running site: `make lab-up` then `make real-mkp`.
-- **Enabled package removal** needs `mkp disable` before `mkp remove`.
+  Enabled package removal needs `mkp disable` before `mkp remove`.
+- **Scale:** `bash scripts/scale_test.sh 60 300` reproduces the measured run;
+  watch the `SynthMK Scheduler` service — overdue flows WARN on the node.

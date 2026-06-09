@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <style>
-    body { font: 13px -apple-system, Segoe UI, Roboto, sans-serif; width: 280px; margin: 0; padding: 12px; background: #0f172a; color: #e2e8f0; }
+    body { font: 13px -apple-system, Segoe UI, Roboto, sans-serif; width: 340px; margin: 0; padding: 12px; background: #0f172a; color: #e2e8f0; }
     h1 { font-size: 14px; margin: 0 0 8px; color: #2dd4bf; }
     .status { margin: 6px 0 10px; font-size: 12px; color: #94a3b8; }
     .status b { color: #e2e8f0; }
@@ -13,7 +13,20 @@
     button.stop { background: #f87171; color: #0f172a; border-color: #f87171; }
     .row { margin-top: 8px; border-top: 1px solid #1e293b; padding-top: 8px; }
     .row-label { font-size: 11px; color: #64748b; margin-bottom: 3px; }
+    #steps { list-style: none; margin: 6px 0 0; padding: 0; max-height: 180px; overflow-y: auto; }
+    #steps li { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 4px; font-size: 11px; }
+    #steps li:nth-child(odd) { background: #1e293b; }
+    #steps .idx { color: #64748b; min-width: 16px; text-align: right; }
+    #steps .lbl { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #steps .lbl.secret { color: #fbbf24; }
+    #steps .del { cursor: pointer; color: #f87171; background: none; border: none; padding: 0 4px; margin: 0; font-size: 12px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; margin-top: 4px; }
+    .grid label { font-size: 11px; color: #94a3b8; display: flex; flex-direction: column; gap: 2px; }
+    .grid label.wide { grid-column: 1 / -1; }
+    .grid input[type="text"], .grid input[type="number"] { background: #020617; color: #e2e8f0; border: 1px solid #334155; border-radius: 4px; padding: 4px 6px; font-size: 12px; }
+    .check { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #94a3b8; margin-top: 4px; }
     textarea { width: 100%; height: 120px; margin-top: 8px; box-sizing: border-box; font: 11px monospace; background: #020617; color: #cbd5e1; border: 1px solid #334155; border-radius: 6px; padding: 6px; display: none; }
+    .hint { font-size: 10px; color: #64748b; margin-top: 4px; }
   </style>
 </head>
 <body>
@@ -27,15 +40,42 @@
   </div>
 
   <div class="row">
-    <div class="row-label">Insert assertion (current step position)</div>
+    <div class="row-label">Recorded steps (✕ removes a step)</div>
+    <ol id="steps"></ol>
+    <div class="hint" id="secret-hint" style="display:none">
+      ⚠ Password fields were recorded as <b>{{ secret.&lt;name&gt; }}</b> references —
+      add the real values to the runner node's secrets file.
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="row-label">Insert assertion (at current step position)</div>
     <button id="assert-text">Visible text</button>
     <button id="assert-title">Title contains</button>
     <button id="assert-url">URL contains</button>
   </div>
 
   <div class="row">
+    <div class="row-label">Check settings</div>
+    <div class="grid">
+      <label class="wide">Service name
+        <input type="text" id="meta-name" placeholder="Synthetic Shop Login" />
+      </label>
+      <label>WARN above (ms)
+        <input type="number" id="meta-warn" value="3000" step="500" min="0" />
+      </label>
+      <label>CRIT above (ms)
+        <input type="number" id="meta-crit" value="7000" step="500" min="0" />
+      </label>
+    </div>
+    <label class="check">
+      <input type="checkbox" id="meta-shot" checked /> Screenshot on failure
+    </label>
+  </div>
+
+  <div class="row">
     <div class="row-label">Export</div>
-    <button id="export" class="primary">Export YAML</button>
+    <button id="export" class="primary">Preview YAML</button>
     <button id="copy">Copy</button>
     <button id="download">Download .yaml</button>
   </div>

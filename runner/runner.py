@@ -39,14 +39,17 @@ except ImportError:  # pragma: no cover - dependency guard
     sys.stderr.write("PyYAML is required: pip install pyyaml\n")
     sys.exit(3)
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import secret_source  # noqa: E402
+
 # Checkmk status digits
 OK, WARN, CRIT, UNKNOWN = 0, 1, 2, 3
 STATE_NAME = {OK: "OK", WARN: "WARN", CRIT: "CRIT", UNKNOWN: "UNKNOWN"}
 
 
 def _oneline(text: str, limit: int = 240) -> str:
-    """Collapse a message to a single Checkmk-safe line (no newlines/pipes)."""
-    flat = " ".join(str(text).split()).replace("|", "/")
+    """Collapse a message to a single Checkmk-safe, secret-redacted line."""
+    flat = " ".join(secret_source.redact(text).split()).replace("|", "/")
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
 # Actions that perform an interaction vs. assert a condition.
@@ -54,7 +57,9 @@ ASSERT_ACTIONS = {
     "check_visible_text",
     "check_title",
     "check_url",
+    "check_element_count",
     "wait_for_element",
+    "wait_for_url",
 }
 
 
@@ -75,12 +80,18 @@ class FlowResult:
     #                    served by the runner-node's screenshot HTTP server.
     dynamic: bool = False
     shot_base_url: str | None = None
+    # Per-step timings [(metric_label, ms)], emitted as extra perfdata so
+    # Checkmk graphs where time is spent inside the journey, not just totals.
+    step_timings: list[tuple[str, int]] | None = None
 
     def perfdata(self) -> str:
         warn = "" if self.warn_ms is None else str(self.warn_ms)
         crit = "" if self.crit_ms is None else str(self.crit_ms)
-        # Checkmk perfdata: name=value;warn;crit  (unit suffix on value is allowed)
-        return f"duration={self.duration_ms}ms;{warn};{crit}"
+        # Checkmk perfdata: name=value;warn;crit, multiple metrics '|'-separated.
+        parts = [f"duration={self.duration_ms}ms;{warn};{crit}"]
+        for label, ms in (self.step_timings or []):
+            parts.append(f"{label}={ms}ms")
+        return "|".join(parts)
 
     def _screenshot_suffix(self) -> str:
         if not self.screenshot:
@@ -90,6 +101,9 @@ class FlowResult:
             # "Escape HTML codes in service output" rule turned Off for this host.
             name = os.path.basename(self.screenshot)
             url = f"{self.shot_base_url.rstrip('/')}/{name}"
+            token = _shot_token(name)
+            if token:
+                url += f"?t={token}"
             return f' <a href="{url}">screenshot</a>'
         return f" (screenshot: {self.screenshot})"
 
@@ -118,12 +132,31 @@ class FlowError(Exception):
         self.status = status
 
 
+# Secrets loaded once per process by run_flow(); None until configured.
+_SECRETS: dict[str, str] | None = None
+
+
+def _shot_token(name: str) -> str | None:
+    """Sign a screenshot filename for the node's authenticated shot server.
+
+    Same scheme as runner-node/shot_server.py: HMAC-SHA256(key, basename)
+    truncated to 32 hex chars. Returns None when no key is configured (e.g.
+    standalone runner without the appliance, or SYNTHMK_SHOT_AUTH=off)."""
+    key_file = os.environ.get("SYNTHMK_SHOT_KEY_FILE")
+    if not key_file or not os.path.isfile(key_file):
+        return None
+    try:
+        import hashlib
+        import hmac as hmac_mod
+        key = Path(key_file).read_bytes().strip()
+        return hmac_mod.new(key, name.encode(), hashlib.sha256).hexdigest()[:32]
+    except Exception:
+        return None
+
+
 def _substitute(value: str) -> str:
-    """Resolve {{ name }} placeholders from environment variables (GOAT-style)."""
-    def repl(match: re.Match) -> str:
-        name = match.group(1).strip()
-        return os.environ.get(name, "")
-    return re.sub(r"\{\{\s*([^}]+?)\s*\}\}", repl, value)
+    """Resolve {{ secret.NAME }} (secrets file) / {{ NAME }} (env) placeholders."""
+    return secret_source.substitute(value, _SECRETS)
 
 
 def load_flow(path: Path) -> dict[str, Any]:
@@ -135,7 +168,7 @@ def load_flow(path: Path) -> dict[str, Any]:
     return data
 
 
-def _run_step(page, step: dict[str, Any], default_timeout: int) -> None:
+def _run_step(page, step: dict[str, Any], default_timeout: int, ctx: dict[str, Any]) -> None:
     action = step.get("action")
     timeout = int(step.get("timeout_ms", default_timeout))
     if action == "open_url":
@@ -144,12 +177,49 @@ def _run_step(page, step: dict[str, Any], default_timeout: int) -> None:
     elif action == "click":
         page.click(step["selector"], timeout=timeout)
     elif action == "fill":
-        page.fill(step["selector"], _substitute(str(step.get("value", ""))), timeout=timeout)
+        value = _substitute(str(step.get("value", "")))
+        # A sensitive fill (passwords, tokens) is never echoed anywhere and
+        # poisons later failure screenshots (inputs get masked before capture).
+        if step.get("sensitive"):
+            secret_source.register_sensitive(value)
+            ctx["sensitive_used"] = True
+        page.fill(step["selector"], value, timeout=timeout)
+    elif action == "press":
+        # Key press, optionally scoped to a selector (else the focused element).
+        key = str(step["key"])
+        if step.get("selector"):
+            page.press(step["selector"], key, timeout=timeout)
+        else:
+            page.keyboard.press(key)
+    elif action == "select_option":
+        # Match by value first; fall back to visible label for recorder output.
+        sel, value = step["selector"], _substitute(str(step.get("value", "")))
+        try:
+            page.select_option(sel, value=value, timeout=timeout)
+        except Exception:
+            try:
+                page.select_option(sel, label=value, timeout=timeout)
+            except Exception:
+                raise FlowError(f"Could not select option '{value}' in '{sel}'")
+    elif action == "hover":
+        page.hover(step["selector"], timeout=timeout)
+    elif action == "scroll_into_view":
+        page.locator(step["selector"]).first.scroll_into_view_if_needed(timeout=timeout)
+    elif action == "wait_ms":
+        page.wait_for_timeout(int(step["ms"]))
     elif action == "wait_for_element":
         try:
             page.wait_for_selector(step["selector"], timeout=timeout, state="visible")
         except Exception:
             raise FlowError(f"Element '{step['selector']}' not found within {timeout}ms")
+    elif action == "wait_for_url":
+        contains = step["contains"]
+        try:
+            page.wait_for_url(lambda url: contains in url, timeout=timeout)
+        except Exception:
+            raise FlowError(
+                f"URL did not contain '{contains}' within {timeout}ms (got '{page.url}')"
+            )
     elif action == "check_visible_text":
         text = step["text"]
         # Visible-text assertion: locate by text, require at least one visible match.
@@ -168,8 +238,25 @@ def _run_step(page, step: dict[str, Any], default_timeout: int) -> None:
         url = page.url
         if contains not in url:
             raise FlowError(f"Expected URL to contain '{contains}', got '{url}'")
+    elif action == "check_element_count":
+        sel = step["selector"]
+        minimum = int(step.get("min", 1))
+        count = page.locator(sel).count()
+        if count < minimum:
+            raise FlowError(
+                f"Expected at least {minimum} element(s) matching '{sel}', found {count}"
+            )
     else:
         raise FlowError(f"Unknown action '{action}'", UNKNOWN)
+
+
+# JS run on the page before a failure screenshot when a sensitive fill happened:
+# blanks every input/textarea so the captured PNG cannot contain a credential
+# (or anything typed after it) in a form field.
+_MASK_INPUTS_JS = (
+    "() => { for (const el of document.querySelectorAll('input, textarea')) "
+    "{ try { el.value = '\\u2022\\u2022\\u2022'; } catch (e) {} } }"
+)
 
 
 def run_flow(
@@ -178,8 +265,18 @@ def run_flow(
     *,
     dynamic: bool | None = None,
     shot_base_url: str | None = None,
+    secrets_file: str | None = None,
 ) -> FlowResult:
+    global _SECRETS
     flow = load_flow(path)
+    # Load the (permission-checked) secrets file up front so a misconfigured
+    # secret store fails fast as UNKNOWN instead of mid-flow with blank creds.
+    secrets_path = secret_source.secrets_file_path(secrets_file)
+    if secrets_path is not None:
+        try:
+            _SECRETS = secret_source.load_secrets(secrets_path)
+        except secret_source.SecretError as exc:
+            raise FlowError(str(exc), UNKNOWN)
     service = flow.get("name", path.stem)
     warn_ms = flow.get("warn_ms")
     crit_ms = flow.get("crit_ms")
@@ -207,11 +304,36 @@ def run_flow(
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=not headed, **launch_args)
         page = browser.new_page()
+        ctx: dict[str, Any] = {"sensitive_used": False}
+        timings: list[tuple[str, int]] = []
+        result.step_timings = timings
         try:
             for i, step in enumerate(flow["steps"]):
+                step_start = time.monotonic()
                 try:
-                    _run_step(page, step, default_timeout)
+                    try:
+                        _run_step(page, step, default_timeout, ctx)
+                    except FlowError:
+                        raise
+                    except secret_source.SecretError as exc:
+                        # Missing/misconfigured secret is operator error, not a
+                        # site failure: UNKNOWN, and the message never carries
+                        # a secret value.
+                        raise FlowError(str(exc), UNKNOWN)
+                    except Exception as exc:
+                        # A raw Playwright failure (click/goto timeout, bad
+                        # selector) is a real check failure, not a runner bug:
+                        # surface it as CRIT with the step named, and keep the
+                        # message to its first line (Playwright appends logs).
+                        first = str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
+                        raise FlowError(
+                            f"Step {i} ({step.get('action', '?')}) failed: {first}"
+                        )
                 except FlowError as fe:
+                    # 'optional: true' marks best-effort steps (cookie/consent
+                    # banners, region popups): a failure is simply skipped.
+                    if step.get("optional"):
+                        continue
                     result.status = fe.status
                     result.summary = str(fe)
                     result.step_index = i
@@ -220,11 +342,17 @@ def run_flow(
                         shot_dir.mkdir(exist_ok=True)
                         shot = shot_dir / f"{path.stem}-fail-step{i}.png"
                         try:
+                            if ctx["sensitive_used"]:
+                                # Blank form fields so the PNG can't leak creds.
+                                page.evaluate(_MASK_INPUTS_JS)
                             page.screenshot(path=str(shot))
                             result.screenshot = str(shot)
                         except Exception:
                             pass
                     break
+                finally:
+                    label = re.sub(r"[^A-Za-z0-9_]", "_", f"step{i}_{step.get('action', 'unknown')}")
+                    timings.append((label, int((time.monotonic() - step_start) * 1000)))
         finally:
             result.duration_ms = int((time.monotonic() - start) * 1000)
             browser.close()
@@ -262,6 +390,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Base URL of the screenshot HTTP server; renders a clickable link "
              "in the failing service (default: $SYNTHMK_SHOT_BASE_URL).",
     )
+    parser.add_argument(
+        "--secrets-file", default=None,
+        help="YAML secrets file for {{ secret.NAME }} references "
+             "(default: $SYNTHMK_SECRETS_FILE; must be chmod 600).",
+    )
     args = parser.parse_args(argv)
     dynamic = True if args.p_state else None  # None => honor flow state_mode
 
@@ -269,6 +402,7 @@ def main(argv: list[str] | None = None) -> int:
         result = run_flow(
             args.flow, headed=args.headed,
             dynamic=dynamic, shot_base_url=args.screenshot_base_url,
+            secrets_file=args.secrets_file,
         )
     except FlowError as fe:
         # Schema / load failure → emit an UNKNOWN Checkmk line, not a traceback.

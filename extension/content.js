@@ -100,15 +100,55 @@
   var lastEl = null;
   var lastValue = '';
 
+  // A secret name for a password field, derived from its name/id — the
+  // recorded flow carries `{{ secret.<name> }}`, NEVER the typed value.
+  function secretNameFor(element) {
+    var base = element.name || element.id || 'password';
+    return String(base).toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'password';
+  }
+
+  function isPasswordField(element) {
+    return element && element.tagName && element.tagName.toLowerCase() === 'input' &&
+      String(element.type).toLowerCase() === 'password';
+  }
+
+  function flushPendingFill() {
+    if (inputTimeout) { clearTimeout(inputTimeout); inputTimeout = null; }
+    if (!lastEl) return;
+    emitFill(lastEl, lastValue);
+    lastEl = null;
+    lastValue = '';
+  }
+
+  function emitFill(element, value) {
+    if (isPasswordField(element)) {
+      // Credential hygiene: export a secret reference + sensitive flag; the
+      // operator adds the real value to the runner node's secrets file.
+      recordStep({
+        action: 'fill',
+        selector: getSelector(element),
+        value: '{{ secret.' + secretNameFor(element) + ' }}',
+        sensitive: true,
+      });
+    } else {
+      recordStep({ action: 'fill', selector: getSelector(element), value: value });
+    }
+  }
+
   function handleInput(event) {
     if (!isRecording) return;
+    // <select> changes are captured by handleChange as select_option; the
+    // input event Chrome also fires for them must not add a duplicate fill.
+    if (event.target && event.target.tagName &&
+        event.target.tagName.toLowerCase() === 'select') return;
+    if (lastEl && lastEl !== event.target) flushPendingFill();
     lastEl = event.target;
     lastValue = lastEl.value;
     if (inputTimeout) clearTimeout(inputTimeout);
     // Debounce so we capture the final value, not every keystroke.
     inputTimeout = setTimeout(function () {
       if (lastEl) {
-        recordStep({ action: 'fill', selector: getSelector(lastEl), value: lastValue });
+        emitFill(lastEl, lastValue);
         lastEl = null;
         lastValue = '';
       }
@@ -120,8 +160,18 @@
     var element = event.target;
     var tag = element.tagName.toLowerCase();
     if (tag === 'select') {
-      recordStep({ action: 'fill', selector: getSelector(element), value: element.value });
+      recordStep({ action: 'select_option', selector: getSelector(element), value: element.value });
     }
+  }
+
+  function handleKeydown(event) {
+    if (!isRecording || event.key !== 'Enter') return;
+    var element = event.target;
+    var tag = element && element.tagName ? element.tagName.toLowerCase() : '';
+    if (tag !== 'input' && tag !== 'textarea') return;
+    // Make sure the typed value lands before the keypress in the flow.
+    flushPendingFill();
+    recordStep({ action: 'press', selector: getSelector(element), key: 'Enter' });
   }
 
   // --- Recording indicator overlay -----------------------------------------
@@ -168,14 +218,17 @@
     document.addEventListener('click', handleClick, true);
     document.addEventListener('input', handleInput, true);
     document.addEventListener('change', handleChange, true);
+    document.addEventListener('keydown', handleKeydown, true);
   }
 
   function stopRecording() {
     isRecording = false;
     removeOverlay();
+    flushPendingFill();
     document.removeEventListener('click', handleClick, true);
     document.removeEventListener('input', handleInput, true);
     document.removeEventListener('change', handleChange, true);
+    document.removeEventListener('keydown', handleKeydown, true);
   }
 
   chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {

@@ -115,16 +115,16 @@ def main() -> int:
     page = FakePage()
     # passing assertions raise nothing
     try:
-        R._run_step(page, {"action": "check_title", "contains": "SynthMK Demo"}, 5000)
-        R._run_step(page, {"action": "check_visible_text", "text": "Welcome to SynthMK"}, 5000)
-        R._run_step(page, {"action": "check_url", "contains": "/demo/"}, 5000)
+        R._run_step(page, {"action": "check_title", "contains": "SynthMK Demo"}, 5000, {})
+        R._run_step(page, {"action": "check_visible_text", "text": "Welcome to SynthMK"}, 5000, {})
+        R._run_step(page, {"action": "check_url", "contains": "/demo/"}, 5000, {})
         check("passing assertions do not raise", True)
     except Exception as e:  # noqa: BLE001
         check(f"passing assertions do not raise ({e})", False)
 
     # failing visible-text assertion → clear message
     try:
-        R._run_step(page, {"action": "check_visible_text", "text": "Dashboard"}, 5000)
+        R._run_step(page, {"action": "check_visible_text", "text": "Dashboard"}, 5000, {})
         check("missing text raises FlowError", False)
     except R.FlowError as fe:
         check("missing text message", str(fe) == "Expected text 'Dashboard' not found")
@@ -132,7 +132,7 @@ def main() -> int:
 
     # failing title assertion
     try:
-        R._run_step(page, {"action": "check_title", "contains": "Nope"}, 5000)
+        R._run_step(page, {"action": "check_title", "contains": "Nope"}, 5000, {})
         check("bad title raises FlowError", False)
     except R.FlowError as fe:
         check("bad title message mentions expected", "Nope" in str(fe))
@@ -204,6 +204,106 @@ def main() -> int:
     # The linter's action table must stay in lockstep with the runner's dispatch.
     check("lint actions cover runner ASSERT_ACTIONS",
           R.ASSERT_ACTIONS.issubset(set(L.REQUIRED_KEYS)))
+
+    print("== v0.3.0: expanded step vocabulary ==")
+    # Every action in the linter table must be dispatchable by the runner: an
+    # unknown action raises FlowError(UNKNOWN), a known one fails differently
+    # (FakePage lacks the method) or passes — so "unknown action" leaking
+    # through for a linted action is the lockstep regression we guard against.
+    for action in L.REQUIRED_KEYS:
+        step = {"action": action, "url": "x", "selector": "#x", "key": "Enter",
+                "ms": 1, "contains": "x", "text": "x", "value": "x", "min": 1}
+        try:
+            R._run_step(FakePage(), step, 50, {})
+        except R.FlowError as fe:
+            if "Unknown action" in str(fe):
+                check(f"runner dispatches lint action '{action}'", False)
+                continue
+        except Exception:
+            pass  # FakePage lacks the Playwright method — dispatch happened.
+        check(f"runner dispatches lint action '{action}'", True)
+
+    # check_element_count semantics on the fake page
+    class CountPage(FakePage):
+        def locator(self, sel):
+            return FakeLocator([FakeMatch(), FakeMatch()])
+    try:
+        R._run_step(CountPage(), {"action": "check_element_count",
+                                  "selector": ".row", "min": 3}, 50, {})
+        check("element count below min raises", False)
+    except R.FlowError as fe:
+        check("element count below min raises", "at least 3" in str(fe))
+    try:
+        R._run_step(CountPage(), {"action": "check_element_count",
+                                  "selector": ".row", "min": 2}, 50, {})
+        check("element count at min passes", True)
+    except R.FlowError:
+        check("element count at min passes", False)
+
+    print("== v0.3.0: per-step timing perfdata ==")
+    timed = R.FlowResult(service="S", status=R.OK, duration_ms=900,
+                         warn_ms=3000, crit_ms=7000,
+                         step_timings=[("step0_open_url", 500), ("step1_fill", 12)])
+    tline = timed.checkmk_line()
+    check("per-step perfdata appended",
+          "duration=900ms;3000;7000|step0_open_url=500ms|step1_fill=12ms " in tline)
+
+    print("== v0.3.0: secret source ==")
+    import secret_source as S  # noqa: E402
+    import tempfile
+
+    S.reset()
+    with tempfile.TemporaryDirectory() as td:
+        sf = Path(td) / "secrets.yaml"
+        sf.write_text("portal_password: hunter2-secret\nportal_user: monitor\n")
+        os.chmod(sf, 0o600)
+        if os.geteuid() != 0:
+            os.chmod(sf, 0o644)
+            try:
+                S.load_secrets(sf)
+                check("world-readable secrets file refused", False)
+            except S.SecretError as e:
+                check("world-readable secrets file refused", "chmod 600" in str(e))
+            os.chmod(sf, 0o600)
+        secrets = S.load_secrets(sf)
+        check("secrets file loads", secrets["portal_user"] == "monitor")
+        check("{{ secret.X }} resolves",
+              S.substitute("{{ secret.portal_password }}", secrets) == "hunter2-secret")
+        check("legacy {{ ENV }} still resolves",
+              S.substitute("{{ SYNTHMK_X }}", secrets) == "https://demo.local")
+        try:
+            S.substitute("{{ secret.nope }}", secrets)
+            check("missing secret raises", False)
+        except S.SecretError as e:
+            check("missing secret raises", "nope" in str(e) and "hunter2" not in str(e))
+        try:
+            S.substitute("{{ secret.x }}", None)
+            check("secret ref without secrets file raises", False)
+        except S.SecretError:
+            check("secret ref without secrets file raises", True)
+        # Redaction: resolved values are scrubbed from any outgoing line.
+        check("resolved secret is redacted",
+              S.redact("could not fill 'hunter2-secret' into #pw")
+              == f"could not fill '{S.MASK}' into #pw")
+        leaky = R.FlowResult(service="S", status=R.CRIT, duration_ms=10,
+                             summary="boom hunter2-secret boom")
+        check("checkmk line is secret-redacted", "hunter2-secret" not in leaky.checkmk_line())
+    S.reset()
+
+    print("== v0.3.0: optional steps + secret-hygiene lint ==")
+    errs, _ = L.lint_flow({"steps": [
+        {"action": "click", "selector": "#consent", "optional": True},
+        {"action": "open_url", "url": "x"},
+    ]}, source="t")
+    check("optional step key is accepted", errs == [])
+    _, warns = L.lint_flow({"steps": [
+        {"action": "fill", "selector": "#pw", "value": "{{ secret.pw }}"},
+    ]}, source="t")
+    check("unmasked secret fill warns", any("sensitive" in w for w in warns))
+    _, warns = L.lint_flow({"steps": [
+        {"action": "fill", "selector": "#pw", "value": "{{ secret.pw }}", "sensitive": True},
+    ]}, source="t")
+    check("sensitive secret fill is quiet", not any("sensitive" in w for w in warns))
 
     print(f"\n{PASS} checks passed, {len(FAILS)} failed.")
     return 1 if FAILS else 0

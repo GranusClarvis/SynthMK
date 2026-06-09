@@ -37,21 +37,34 @@ services:
     build:
       context: ..                       # repo root
       dockerfile: runner-node/Dockerfile
-    image: synthmk-runner:0.2.0
+    image: synthmk-runner:0.3.0
     container_name: synthmk-runner
     hostname: synthmk-runner
     environment:
       # Base URL the OPERATOR's browser uses to open screenshot links. 9180 is
       # published below. Defaults to localhost (testing on the lab host); set
       # SYNTHMK_SHOT_BASE_URL=http://<lan-ip>:9180 to click links from another
-      # machine on the LAN.
+      # machine on the LAN. Links carry their own access token (auth stays on
+      # in the lab to prove the production path).
       - SYNTHMK_SHOT_BASE_URL=${SYNTHMK_SHOT_BASE_URL:-http://localhost:9180}
+      # Secrets for {{ secret.* }} references (the login flow uses them).
+      - SYNTHMK_SECRETS_FILE=/run/synthmk/secrets.yaml
+      - SYNTHMK_MAX_CONCURRENCY=4
     volumes:
       - ./flows:/opt/synthmk/flows:ro                              # lab flows
       - ./flows.conf:/opt/synthmk/runner-node/flows.conf:ro        # lab schedule
+      - ./secrets.yaml:/run/synthmk/secrets.yaml:ro                # lab secrets (chmod 600)
     ports:
       - "9180:9180"      # screenshots (clickable from your browser)
     # 6556 is intentionally NOT published — Checkmk reaches it over labnet by name.
+    security_opt:
+      - no-new-privileges:true
+    shm_size: 1g
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 6g
     networks: [labnet]
     depends_on: [intranet-demo]
     restart: unless-stopped

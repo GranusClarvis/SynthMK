@@ -1,5 +1,7 @@
 # Recorded by the SynthMK Chrome recorder. Review selectors/values before
-# committing; templatize secrets as {{ ENV_NAME }} (see docs/flow-schema.md).
+# committing. Password fields were exported as {{ secret.<name> }} refs —
+# add the real values to the runner node's secrets file (chmod 600), see
+# docs/flow-schema.md.
 name: "Recorded Demo Flow"
 start_url: "{{ SYNTHMK_DEMO_URL }}"
 timeout_ms: 30000
@@ -12,16 +14,26 @@ steps:
     url: "{{ SYNTHMK_DEMO_URL }}"
   - action: fill
     selector: "#username"
-    value: "{{ DEMO_USER }}"
+    value: "{{ secret.portal_user }}"
   - action: fill
     selector: "#password"
-    value: "{{ DEMO_PASS }}"
-  - action: click
-    selector: "#submit"
+    value: "{{ secret.portal_password }}"
+    sensitive: true
+  - action: press
+    selector: "#password"
+    key: "Enter"
   - action: wait_for_element
     selector: "[data-testid=\"dashboard\"]"
     timeout_ms: 5000
+  - action: select_option
+    selector: "#report-period"
+    value: "week"
+  - action: check_element_count
+    selector: "tr.order-row"
+    min: 3
   - action: check_visible_text
     text: "Account Overview"
   - action: check_title
     contains: "SynthMK Demo"
+  - action: check_url
+    contains: "dashboard"

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<!--
+  SynthMK lab login page. Client-side demo auth (this is a monitoring lab, not
+  an auth example): the accepted credentials are the ones the lab secrets file
+  feeds the runner — user "monitor" / password "synthmk-lab-secret".
+  A successful login stores a session flag and redirects to dashboard.html;
+  a failure renders an inline error the flow can assert on.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Internal Portal — Sign in</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 28rem; margin: 4rem auto; }
+    label { display: block; margin-top: 1rem; }
+    input { width: 100%; padding: .5rem; }
+    button { margin-top: 1.5rem; padding: .5rem 1.5rem; }
+    .error { color: #b00020; margin-top: 1rem; }
+  </style>
+</head>
+<body data-testid="login-page">
+  <h1>Internal Portal</h1>
+  <p>Sign in to continue.</p>
+  <form id="login-form">
+    <label>Username
+      <input id="username" name="username" type="text" autocomplete="username" />
+    </label>
+    <label>Password
+      <input id="password" name="password" type="password" autocomplete="current-password" />
+    </label>
+    <button id="login-submit" type="submit">Sign in</button>
+    <p id="login-error" class="error" hidden>Invalid username or password.</p>
+  </form>
+  <script>
+    document.getElementById('login-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var u = document.getElementById('username').value;
+      var p = document.getElementById('password').value;
+      if (u === 'monitor' && p === 'synthmk-lab-secret') {
+        sessionStorage.setItem('synthmk-lab-session', '1');
+        window.location.href = 'dashboard.html';
+      } else {
+        document.getElementById('login-error').hidden = false;
+      }
+    });
+  </script>
+</body>
+</html>

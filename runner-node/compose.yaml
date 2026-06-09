@@ -1,0 +1,57 @@
+# SynthMK runner-node — PRODUCTION deployment template.
+#
+#   cp compose.yaml /srv/synthmk/compose.yaml   # then edit the marked lines
+#   docker compose up -d
+#
+# This is the hardened single-node deployment: resource limits sized for the
+# default 4-way browser concurrency, privileges dropped, screenshots
+# token-authenticated. The LAN lab variant lives in lab/docker-compose.yml.
+#
+# Network exposure contract (firewall accordingly):
+#   tcp/6556  agent transport — ONLY the Checkmk server needs to reach it
+#   tcp/9180  screenshots     — only operators' browsers need to reach it
+#
+# To upgrade to the TLS agent transport, see runner-node/register_agent.sh.
+name: synthmk-node
+
+services:
+  synthmk-runner:
+    image: synthmk-runner:0.3.0
+    # Or build from a checkout:
+    # build: { context: .., dockerfile: runner-node/Dockerfile }
+    container_name: synthmk-runner
+    hostname: synthmk-runner          # = the Checkmk host name of this node
+    environment:
+      # EDIT: base URL operators' browsers use for screenshot links.
+      - SYNTHMK_SHOT_BASE_URL=http://synthmk-runner.example.lan:9180
+      # Browser runs in parallel; ~1-1.5 GB RSS each at peak. 4 fits the 6g
+      # limit below; raise both together (see docs/scaling.md).
+      - SYNTHMK_MAX_CONCURRENCY=4
+      # Secrets for {{ secret.* }} (mount below; chmod 600 on the host).
+      - SYNTHMK_SECRETS_FILE=/run/synthmk/secrets.yaml
+      # Production transport after register_agent.sh: flip to "official".
+      - SYNTHMK_AGENT_MODE=socat
+    volumes:
+      - ./flows:/opt/synthmk/flows:ro                          # EDIT: your flow files
+      - ./flows.conf:/opt/synthmk/runner-node/flows.conf:ro    # EDIT: your schedule
+      - ./secrets.yaml:/run/synthmk/secrets.yaml:ro            # EDIT: chmod 600
+      - synthmk-shots:/opt/synthmk/screenshots
+      - cmk-agent-state:/var/lib/cmk-agent                     # TLS registration state
+    ports:
+      - "6556:6556"     # agent transport (firewall: Checkmk server only)
+      - "9180:9180"     # screenshots (token-auth; firewall: operator LAN)
+    security_opt:
+      - no-new-privileges:true
+    # Headless Chromium under --disable-dev-shm-usage still benefits from
+    # a real /dev/shm at higher concurrency.
+    shm_size: 1g
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 6g
+    restart: unless-stopped
+
+volumes:
+  synthmk-shots:
+  cmk-agent-state:

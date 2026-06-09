@@ -1,0 +1,37 @@
+# The flagship lab journey: full login -> dashboard flow with secure secrets.
+# Exercises: open_url, fill, sensitive fill via {{ secret.* }}, click,
+# wait_for_url, check_visible_text, hover, select_option, check_element_count.
+# Credentials come from the runner-node secrets file (lab/secrets.yaml mounted
+# read-only, chmod 600) — never from the flow file or plain environment.
+name: Synthetic Portal Login
+checkmk_host: intranet-demo
+timeout_ms: 20000
+warn_ms: 5000
+crit_ms: 15000
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: http://intranet-demo/login.html
+  - action: fill
+    selector: "#username"
+    value: "{{ secret.portal_user }}"
+  - action: fill
+    selector: "#password"
+    value: "{{ secret.portal_password }}"
+    sensitive: true
+  - action: click
+    selector: "#login-submit"
+  - action: wait_for_url
+    contains: dashboard.html
+  - action: check_visible_text
+    text: Signed in as monitor
+  - action: hover
+    selector: "#user-menu"
+  - action: wait_for_element
+    selector: "[data-testid='menu-signout']"
+  - action: select_option
+    selector: "#report-period"
+    value: This week
+  - action: check_element_count
+    selector: "tr.order-row"
+    min: 3
