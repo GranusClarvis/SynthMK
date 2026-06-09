@@ -13,6 +13,15 @@ All notable changes to SynthMK are documented here. Format loosely follows
   scan, and VERSION↔package↔docs version-consistency check.
 - `.github/workflows/ci.yml`: runs `make ci` on push/PR to `main`.
 - `RELEASE_CHECKLIST.md`: v0.1.0 community-release steps.
+- `runner/flow_lint.py` + `make lint-flows`: static, browser-free flow linter
+  (unknown actions, missing per-action keys, `warn_ms>crit_ms`, empty steps)
+  with clear messages and 0/2/3 exit codes; every tracked flow is linted in CI,
+  and the runner↔linter action table is asserted in lockstep.
+- `packaging/test_package_contract.py` + `make package-contract`: asserts the
+  built MKP payload has the expected files at the expected install paths
+  (executable local-check, version-consistent metadata) and leaks no build junk
+  — a correctness gate on top of the existing determinism gate.
+- `docs/failure-modes.md`: operator-facing exit-code and failure reference.
 - This changelog.
 
 ## [0.1.0] — pending first community release

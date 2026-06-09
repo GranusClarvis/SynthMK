@@ -27,6 +27,12 @@ Source of truth for autonomous scheduling is Clarvis
 - [x] `[SYNTHMK_RELEASE_DOCS]` changelog + release checklist preparing the v0.1.0 community release. → `CHANGELOG.md`, `RELEASE_CHECKLIST.md`
 - [x] `[SYNTHMK_VERSION_CONSISTENCY_CHECK]` CI gate asserting `VERSION` == built `info.json` version == docs version refs. → `scripts/ci.sh` (version-consistency section)
 
+## Phase 4 — release-readiness hardening
+
+- [x] `[SYNTHMK_PACKAGE_PAYLOAD_CONTRACT]` [VERIFIED] payload contract test proving the built MKP contains the expected files at the expected install paths (executable local-check, runner/flows/demo payload, version-consistent metadata) and leaks no build junk — beyond byte-identical rebuild. → `packaging/test_package_contract.py`, wired into `scripts/ci.sh` (payload-contract gate) + `make package-contract`. (15/15 checks pass in `make ci`.)
+- [x] `[SYNTHMK_FLOW_LINT]` [VERIFIED] static, browser-free flow linter (known actions, per-action required keys, `warn_ms<=crit_ms`, empty-steps) with clear messages + exit codes (0/2/3); lints every tracked flow in CI; runner↔linter action-table lockstep asserted in the contract suite. → `runner/flow_lint.py`, `make lint-flows`, `scripts/ci.sh` (flow-lint gate), tests in `runner/test_contract.py`.
+- [x] `[SYNTHMK_FAILURE_MODE_DOCS]` [VERIFIED] operator-facing failure-mode + exit-code reference for the runner, linter, and package contract. → `docs/failure-modes.md`.
+
 ## First Acceptance Target
 
 A sample flow can be executed locally and produces output like:

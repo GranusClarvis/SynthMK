@@ -38,6 +38,17 @@ else
   sed 's/^/    /' /tmp/synthmk_ci_validate.log
 fi
 
+# --- 1b. flow lint (every tracked flow) ------------------------------------
+section "flow lint (static schema check on tracked flows)"
+mapfile -t FLOWS < <(printf '%s\n' "${TRACKED[@]}" | grep -E '^flows/.*\.ya?ml$' || true)
+if [[ "${#FLOWS[@]}" -eq 0 ]]; then
+  ok "no tracked flow files to lint"
+elif $PY runner/flow_lint.py "${FLOWS[@]}" >/tmp/synthmk_ci_lint.log 2>&1; then
+  ok "all tracked flows lint clean (${#FLOWS[@]})"
+else
+  bad "flow lint failed"; sed 's/^/    /' /tmp/synthmk_ci_lint.log
+fi
+
 # --- 2. shell syntax -------------------------------------------------------
 section "shell syntax (bash -n + shellcheck)"
 have_shellcheck=0; command -v shellcheck >/dev/null 2>&1 && have_shellcheck=1
@@ -89,6 +100,16 @@ if bash packaging/build_mkp.sh >/tmp/synthmk_ci_pkg1.log 2>&1; then
   fi
 else
   bad "package build errored"; sed 's/^/    /' /tmp/synthmk_ci_pkg1.log
+fi
+
+# --- 4b. package payload contract ------------------------------------------
+# Determinism (above) proves the build is reproducible; this proves it is
+# CORRECT — expected install paths present, local-check executable, no junk.
+section "package payload contract (expected files / paths / no junk)"
+if $PY packaging/test_package_contract.py >/tmp/synthmk_ci_pkgc.log 2>&1; then
+  ok "package payload contract holds"
+else
+  bad "package payload contract failed"; sed 's/^/    /' /tmp/synthmk_ci_pkgc.log
 fi
 
 # --- 5. secret scan (tracked files only) -----------------------------------

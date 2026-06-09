@@ -139,6 +139,36 @@ def main() -> int:
     check("placeholder resolved", R._substitute("{{ SYNTHMK_X }}/login") == "https://demo.local/login")
     check("unknown placeholder -> empty", R._substitute("{{ NOPE_VAR }}") == "")
 
+    print("== flow_lint static validation ==")
+    import flow_lint as L  # noqa: E402
+
+    clean = {"name": "ok", "steps": [
+        {"action": "open_url", "url": "x"},
+        {"action": "check_title", "contains": "T"},
+    ]}
+    errs, _ = L.lint_flow(clean, source="t")
+    check("clean flow has no errors", errs == [])
+
+    errs, _ = L.lint_flow({"steps": [{"action": "clikc", "selector": "#x"}]}, source="t")
+    check("unknown action is an error", any("unknown action" in e for e in errs))
+
+    errs, _ = L.lint_flow({"steps": [{"action": "click"}]}, source="t")
+    check("missing required key is an error", any("missing required key 'selector'" in e for e in errs))
+
+    errs, _ = L.lint_flow({"steps": [], "name": "x"}, source="t")
+    check("empty steps is an error", any("empty" in e for e in errs))
+
+    errs, _ = L.lint_flow({"warn_ms": 9000, "crit_ms": 3000,
+                           "steps": [{"action": "open_url", "url": "x"}]}, source="t")
+    check("warn_ms > crit_ms is an error", any("warn_ms" in e for e in errs))
+
+    _, warns = L.lint_flow({"steps": [{"action": "open_url", "url": "x", "typo": 1}]}, source="t")
+    check("unexpected step key is a warning, not error", any("typo" in w for w in warns))
+
+    # The linter's action table must stay in lockstep with the runner's dispatch.
+    check("lint actions cover runner ASSERT_ACTIONS",
+          R.ASSERT_ACTIONS.issubset(set(L.REQUIRED_KEYS)))
+
     print(f"\n{PASS} checks passed, {len(FAILS)} failed.")
     return 1 if FAILS else 0
 
