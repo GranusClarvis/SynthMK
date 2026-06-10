@@ -95,6 +95,8 @@ TOP_LEVEL_KNOWN = {
     # v0.5.0 additions:
     "type",           # "flow" (default) | "script" (Playwright Python, trust-gated)
     "script",         # script flows: path to the .py, relative to the flow file
+    # v0.6.0 additions:
+    "max_attempts",   # 1..3; CRIT/WARN outcomes re-run with a fresh browser
 }
 
 # Allowed values for the state_mode top-level field.
@@ -160,6 +162,11 @@ def lint_flow(data: Any, *, source: str = "<flow>",
     checkmk_host = data.get("checkmk_host")
     if checkmk_host is not None and (not isinstance(checkmk_host, str) or not checkmk_host.strip()):
         errors.append(f"{source}: checkmk_host must be a non-empty string when set")
+
+    max_attempts = data.get("max_attempts")
+    if max_attempts is not None and (
+            not isinstance(max_attempts, int) or not 1 <= max_attempts <= 3):
+        errors.append(f"{source}: max_attempts must be an integer 1..3")
 
     ftype = str(data.get("type", "flow"))
     if ftype not in ("flow", "script"):

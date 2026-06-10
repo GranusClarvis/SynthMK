@@ -1,0 +1,16 @@
+# TOTP substitution live: a 6-digit RFC 6238 code derived from the base32
+# seed in the lab secrets file is typed into the MFA field every run.
+name: Synthetic MFA Code Entry
+checkmk_host: intranet-demo
+timeout_ms: 20000
+warn_ms: 5000
+crit_ms: 15000
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: http://intranet-demo/settings.html
+  - action: fill
+    selector: "#mfa-code"
+    value: "{{ totp.lab_mfa_seed }}"
+  - action: check_visible_text
+    text: All systems normal

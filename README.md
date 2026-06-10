@@ -102,6 +102,7 @@ sudo ./install.sh        # install to /opt/synthmk + agent local-check dir
 sudo ./install.sh --uninstall
 make package             # deterministic dist/synthmk-<version>.mkp *skeleton* (CI checksum)
 make real-mkp            # REAL installable .mkp via a running Checkmk site's own mkp tool
+make real-mkp-ci         # ephemeral Checkmk: build + `mkp add`/`enable` the .mkp (Docker)
 ```
 
 `make package` builds the byte-deterministic skeleton (for CI). `make real-mkp`
@@ -109,8 +110,14 @@ produces the genuine Checkmk-Exchange-installable `.mkp` (info + info.json +
 member tarballs) using the lab Checkmk container — bring it up first
 (`cd lab && docker compose up -d checkmk`). Verified against Checkmk Raw 2.3.
 
-`make ci` is the single contract GitHub Actions and autonomous agents both run
-(see [`scripts/ci.sh`](scripts/ci.sh) and [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+`make ci` is the single browser/Docker-free contract GitHub Actions and
+autonomous agents both run (see [`scripts/ci.sh`](scripts/ci.sh) and
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml)). A **separate optional**
+job, [`.github/workflows/real-mkp.yml`](.github/workflows/real-mkp.yml)
+(`make real-mkp-ci` / [`scripts/ci_real_mkp.sh`](scripts/ci_real_mkp.sh)), is
+Docker-gated: it spins up an ephemeral Checkmk Raw site, runs `make real-mkp`,
+then proves the built artifact `mkp add` + `mkp enable`s and lists the shipped
+files. It never gates the fast `ci` workflow.
 
 See [`INSTALL.md`](INSTALL.md) for the home-lab install/update/uninstall path,
 [`packaging/README.md`](packaging/README.md) for the MKP layout,

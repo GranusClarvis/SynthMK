@@ -645,6 +645,73 @@ def main() -> int:
         errs, _ = L.lint_flow({"name": "s", "type": "robot"}, source="t")
         check("lint rejects unknown flow type", any("type 'robot'" in e for e in errs))
 
+    print("== v0.6.0: max_attempts retry ==")
+    with _tf.TemporaryDirectory() as td:
+        tdp = Path(td)
+        flaky = tdp / "flaky.yaml"
+        flaky.write_text("name: F\nmax_attempts: 3\nsteps:\n"
+                         "  - action: open_url\n    url: x\n")
+        calls = {"n": 0}
+        real_run_flow = R.run_flow
+
+        def fake_run_flow(path, **kwargs):
+            calls["n"] += 1
+            status = R.CRIT if calls["n"] < 3 else R.OK
+            return R.FlowResult(service="F", status=status,
+                                summary="boom" if status else "Flow completed successfully")
+        R.run_flow = fake_run_flow
+        try:
+            res = R.run_with_retries(flaky)
+            check("flaky flow recovers within max_attempts",
+                  res.status == R.OK and calls["n"] == 3)
+            check("recovery is visible in the summary",
+                  "recovered on attempt 3/3" in res.summary)
+
+            calls["n"] = 0
+
+            def always_crit(path, **kwargs):
+                calls["n"] += 1
+                return R.FlowResult(service="F", status=R.CRIT, summary="down")
+            R.run_flow = always_crit
+            res = R.run_with_retries(flaky)
+            check("hard failure exhausts attempts and stays CRIT",
+                  res.status == R.CRIT and calls["n"] == 3
+                  and "attempt 3/3" in res.summary)
+
+            calls["n"] = 0
+
+            def unknown_once(path, **kwargs):
+                calls["n"] += 1
+                return R.FlowResult(service="F", status=R.UNKNOWN, summary="no secret")
+            R.run_flow = unknown_once
+            res = R.run_with_retries(flaky)
+            check("UNKNOWN (operator error) is never retried",
+                  res.status == R.UNKNOWN and calls["n"] == 1)
+
+            single = tdp / "single.yaml"
+            single.write_text("name: S\nsteps:\n  - action: open_url\n    url: x\n")
+            calls["n"] = 0
+            R.run_flow = always_crit
+            res = R.run_with_retries(single)
+            check("default is exactly one attempt, summary untouched",
+                  calls["n"] == 1 and res.summary == "down")
+
+            capped = tdp / "capped.yaml"
+            capped.write_text("name: C\nmax_attempts: 99\nsteps:\n"
+                              "  - action: open_url\n    url: x\n")
+            calls["n"] = 0
+            res = R.run_with_retries(capped)
+            check("max_attempts is capped at 3", calls["n"] == 3)
+        finally:
+            R.run_flow = real_run_flow
+
+    errs, _ = L.lint_flow({"name": "r", "max_attempts": 2,
+                           "steps": [{"action": "open_url", "url": "x"}]}, source="t")
+    check("lint accepts max_attempts 2", errs == [])
+    errs, _ = L.lint_flow({"name": "r", "max_attempts": 9,
+                           "steps": [{"action": "open_url", "url": "x"}]}, source="t")
+    check("lint rejects max_attempts > 3", any("max_attempts" in e for e in errs))
+
     print(f"\n{PASS} checks passed, {len(FAILS)} failed.")
     return 1 if FAILS else 0
 

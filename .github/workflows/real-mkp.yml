@@ -1,0 +1,42 @@
+name: real-mkp
+
+# Optional Docker-gated job: build a REAL .mkp against an ephemeral Checkmk Raw
+# site and prove the artifact installs (`mkp add` + `mkp enable`) and lists the
+# files we ship. This is SEPARATE from `ci` (.github/workflows/ci.yml), which is
+# intentionally browser/Docker-free and runs on every push. This one pulls the
+# Checkmk Raw image (~1 GB) and spins up a site, so it runs only:
+#   * manually (workflow_dispatch), or
+#   * when packaging/release plumbing changes on main.
+# It never gates the fast `ci` workflow.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "VERSION"
+      - "packaging/**"
+      - "checkmk/**"
+      - "runner/**"
+      - "flows/**"
+      - "scripts/ci_real_mkp.sh"
+      - ".github/workflows/real-mkp.yml"
+
+jobs:
+  real-mkp:
+    runs-on: ubuntu-latest
+    # The whole job is one container lifecycle; keep it bounded so a stuck site
+    # start can't hang the runner.
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      # ubuntu-latest ships with Docker; this just surfaces the version in logs.
+      - name: Docker info
+        run: docker version --format 'server {{.Server.Version}}'
+
+      # Builds the .mkp inside an ephemeral Checkmk Raw container, then proves
+      # the built artifact adds + enables + lists the expected payload. The
+      # script owns container start/wait/teardown itself.
+      - name: build + install real .mkp against ephemeral Checkmk
+        run: bash scripts/ci_real_mkp.sh

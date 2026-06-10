@@ -53,6 +53,41 @@ VERSION = (HOME / "VERSION").read_text().strip() if (HOME / "VERSION").is_file()
 
 FLOW_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+\.ya?ml$")
 
+# Optional HTTPS for the dashboard itself: point both at PEM files and the
+# server binds TLS. (The agent transport has its own TLS via cmk-agent-ctl;
+# this covers the operator's browser session on :9181.)
+TLS_CERT = os.environ.get("SYNTHMK_ADMIN_TLS_CERT", "").strip()
+TLS_KEY = os.environ.get("SYNTHMK_ADMIN_TLS_KEY", "").strip()
+
+# Failed-login throttle: after LOCKOUT_AFTER consecutive failures from one
+# address, /api/login from it is refused for LOCKOUT_SECS. The token is
+# high-entropy, so this is about audit noise and brute-force hygiene, not a
+# load-bearing defense; any successful login clears the counter.
+LOCKOUT_AFTER = int(os.environ.get("SYNTHMK_LOGIN_LOCKOUT_AFTER", "5"))
+LOCKOUT_SECS = int(os.environ.get("SYNTHMK_LOGIN_LOCKOUT_SECS", "60"))
+_FAILED_LOGINS: dict[str, list] = {}  # ip -> [count, locked_until_epoch]
+_FAILED_LOCK = threading.Lock()
+
+
+def login_locked(ip: str) -> bool:
+    with _FAILED_LOCK:
+        entry = _FAILED_LOGINS.get(ip)
+        return bool(entry) and time.time() < entry[1]
+
+
+def login_failed(ip: str) -> None:
+    with _FAILED_LOCK:
+        entry = _FAILED_LOGINS.setdefault(ip, [0, 0.0])
+        entry[0] += 1
+        if entry[0] >= LOCKOUT_AFTER:
+            entry[1] = time.time() + LOCKOUT_SECS
+            entry[0] = 0
+
+
+def login_succeeded(ip: str) -> None:
+    with _FAILED_LOCK:
+        _FAILED_LOGINS.pop(ip, None)
+
 
 def load_token() -> str:
     tok = os.environ.get("SYNTHMK_ADMIN_TOKEN", "").strip()
@@ -431,6 +466,15 @@ class AdminHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
+        if ctype.startswith("text/html"):
+            # The dashboard is self-contained: inline CSS/JS, data: screenshots
+            # from the builder, same-origin fetches. Lock everything else out.
+            self.send_header(
+                "Content-Security-Policy",
+                "default-src 'none'; style-src 'unsafe-inline'; "
+                "script-src 'unsafe-inline'; img-src 'self' data:; "
+                "connect-src 'self'; form-action 'self'; frame-ancestors 'none'")
+            self.send_header("X-Frame-Options", "DENY")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -491,16 +535,25 @@ class AdminHandler(BaseHTTPRequestHandler):
         if url.path == "/login":
             return self._send(200, LOGIN_HTML.encode(), "text/html; charset=utf-8")
         if url.path == "/api/login":
+            ip = self._ip()
+            if login_locked(ip):
+                audit("", ip, "login_locked", ok=False)
+                return self._json(429, {"ok": False,
+                                        "error": "too many failed attempts; wait a minute"})
             tok = (parse_qs(url.query).get("token") or [""])[0]
             ok_admin = hmac.compare_digest(tok, TOKEN)
             ok_viewer = bool(VIEWER_TOKEN) and hmac.compare_digest(tok, VIEWER_TOKEN)
             if ok_admin or ok_viewer:
-                audit("admin" if ok_admin else "viewer", self._ip(), "login")
-                return self._send(200, b'{"ok": true}', "application/json", {
-                    "Set-Cookie": "synthmk_admin=" + tok +
-                                  "; HttpOnly; SameSite=Strict; Path=/",
-                })
-            audit("", self._ip(), "login", ok=False)
+                login_succeeded(ip)
+                audit("admin" if ok_admin else "viewer", ip, "login")
+                cookie = ("synthmk_admin=" + tok +
+                          "; HttpOnly; SameSite=Strict; Path=/")
+                if TLS_CERT:
+                    cookie += "; Secure"
+                return self._send(200, b'{"ok": true}', "application/json",
+                                  {"Set-Cookie": cookie})
+            login_failed(ip)
+            audit("", ip, "login", ok=False)
             return self._json(403, {"ok": False, "error": "bad token"})
         if url.path == "/api/results":
             # Read-only feed for the multi-node special agent (separate token).
@@ -585,6 +638,27 @@ class AdminHandler(BaseHTTPRequestHandler):
         if url.path == "/api/builder/stop":
             audit("admin", self._ip(), "builder_stop")
             return self._json(200, BUILDER.stop())
+
+        if url.path == "/api/import/devtools":
+            # Chrome DevTools Recorder JSON -> flow YAML, straight into the
+            # editor. Same converter as runner/import_devtools.py.
+            recording = self._body().get("recording")
+            if not isinstance(recording, dict):
+                return self._json(400, {"error": "recording must be the parsed "
+                                                 "DevTools JSON object"})
+            sys.path.insert(0, str(HOME / "runner"))
+            try:
+                import import_devtools
+                flow, notes = import_devtools.convert(recording)
+                if not flow["steps"]:
+                    return self._json(422, {"error": "recording produced no usable steps",
+                                            "notes": notes})
+                text = import_devtools.to_yaml(flow)
+            except Exception as exc:
+                return self._json(500, {"error": f"import failed: {exc}"})
+            audit("admin", self._ip(), "import_devtools", flow.get("name", ""))
+            return self._json(200, {"ok": True, "yaml": text,
+                                    "name": flow.get("name", ""), "notes": notes})
 
         if url.path == "/api/run":
             body = self._body()
@@ -742,6 +816,8 @@ textarea{width:100%;height:300px;background:#020617;color:#cbd5e1;border:1px sol
     <span class="pill" id="sched">scheduler: …</span>
     <span class="pill" id="ver"></span>
     <button onclick="toggleBuilder()" id="builderbtn">Step builder</button>
+    <button onclick="document.getElementById('importfile').click()" id="importbtn">Import recording</button>
+    <input type="file" id="importfile" accept=".json,application/json" style="display:none" onchange="importRecording(this)">
     <button onclick="newFlow()" class="primary" id="newbtn">+ New check</button>
   </div>
 </div>
@@ -832,6 +908,7 @@ async function refresh(){
   const canWrite=st.flows_dir_writable&&ROLE==='admin';
   document.getElementById('newbtn').style.display=canWrite?'':'none';
   document.getElementById('builderbtn').style.display=ROLE==='admin'?'':'none';
+  document.getElementById('importbtn').style.display=canWrite?'':'none';
   const rows=st.flows.map((f,i)=>{
     const l=f.last||{};const cls=(f.paused?' class="paused"':(l._stale?' class="stale"':''));
     const steps=(l.steps||[]).map(s=>s.label.replace(/^step\\d+_/,'')+' '+s.ms+'ms').join(' → ');
@@ -894,6 +971,27 @@ async function rollbackVersion(){
 function editFlowByName(file){
   const i=FLOWS.findIndex(f=>f.file===file);
   if(i>=0)editFlow(i);
+}
+async function importRecording(input){
+  const f=input.files[0];input.value='';
+  if(!f)return;
+  let rec;
+  try{rec=JSON.parse(await f.text());}
+  catch(e){alert('Not valid JSON: '+e.message);return;}
+  const r=await fetch('/api/import/devtools',{method:'POST',headers:hdrs(),
+    body:JSON.stringify({recording:rec})});
+  const d=await r.json();
+  if(!r.ok){alert(d.error||'import failed');return;}
+  const slug=(d.name||'imported-check').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')||'imported-check';
+  document.getElementById('etitle').textContent='Imported recording: '+(d.name||f.name);
+  document.getElementById('efile').value=slug+'.yaml';
+  document.getElementById('eint').value='300';
+  document.getElementById('ehost').value='';document.getElementById('etags').value='';
+  document.getElementById('histrow').style.display='none';
+  document.getElementById('eyaml').value=d.yaml;
+  document.getElementById('msg').textContent=(d.notes&&d.notes.length?('Importer notes:\\n- '+d.notes.join('\\n- ')+'\\n'):'')+'Review, then Lint & save.';
+  document.getElementById('editor').style.display='block';
+  window.scrollTo(0,document.body.scrollHeight);
 }
 function newFlow(){
   document.getElementById('etitle').textContent='New check';
@@ -1126,9 +1224,18 @@ refresh();setInterval(refresh,5000);
 
 def main() -> int:
     RUN_NOW_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"admin-server: dashboard on {BIND}:{PORT} "
+    server = ThreadingHTTPServer((BIND, PORT), AdminHandler)
+    scheme = "http"
+    if TLS_CERT and TLS_KEY:
+        import ssl
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.load_cert_chain(TLS_CERT, TLS_KEY)
+        server.socket = ctx.wrap_socket(server.socket, server_side=True)
+        scheme = "https"
+    print(f"admin-server: dashboard on {scheme}://{BIND}:{PORT} "
           f"(flows {'rw' if os.access(FLOWS_DIR, os.W_OK) else 'ro'})", flush=True)
-    ThreadingHTTPServer((BIND, PORT), AdminHandler).serve_forever()
+    server.serve_forever()
     return 0
 
 

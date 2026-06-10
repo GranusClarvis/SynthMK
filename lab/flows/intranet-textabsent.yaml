@@ -1,0 +1,17 @@
+# Negative assertion live: the dashboard must NOT show error banners.
+name: Synthetic Dashboard No-Errors
+checkmk_host: intranet-demo
+timeout_ms: 20000
+warn_ms: 5000
+crit_ms: 15000
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: http://intranet-demo/index.html
+  - action: check_text_absent
+    text: Server Error
+  - action: check_text_absent
+    text: maintenance
+  - action: check_element_count
+    selector: a
+    min: 1

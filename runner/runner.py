@@ -767,6 +767,36 @@ def run_flow(
     return result
 
 
+MAX_ATTEMPTS_CAP = 3
+
+
+def run_with_retries(path: Path, **kwargs) -> FlowResult:
+    """run_flow honoring the flow's `max_attempts` (default 1, capped at 3).
+
+    Only CRIT/WARN check outcomes retry — UNKNOWN means operator error
+    (missing secret, bad schema) and retrying cannot fix it. Each attempt is a
+    fresh browser. The final result notes the attempts so a flapping check is
+    visible as flapping, not hidden.
+    """
+    try:
+        attempts = int((yaml.safe_load(path.read_text()) or {}).get("max_attempts", 1))
+    except Exception:
+        attempts = 1
+    attempts = max(1, min(attempts, MAX_ATTEMPTS_CAP))
+
+    result = run_flow(path, **kwargs)
+    tried = 1
+    while tried < attempts and result.status in (WARN, CRIT):
+        result = run_flow(path, **kwargs)
+        tried += 1
+    if tried > 1:
+        suffix = f" (attempt {tried}/{attempts})"
+        if result.status == OK:
+            suffix = f" (recovered on attempt {tried}/{attempts})"
+        result.summary = result.summary + suffix
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="SynthMK synthetic runner")
     parser.add_argument("flow", type=Path, help="Path to a YAML flow file")
@@ -795,7 +825,7 @@ def main(argv: list[str] | None = None) -> int:
     dynamic = True if args.p_state else None  # None => honor flow state_mode
 
     try:
-        result = run_flow(
+        result = run_with_retries(
             args.flow, headed=args.headed,
             dynamic=dynamic, shot_base_url=args.screenshot_base_url,
             secrets_file=args.secrets_file,

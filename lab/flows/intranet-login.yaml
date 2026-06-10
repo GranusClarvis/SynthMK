@@ -15,6 +15,7 @@ steps:
   - action: fill
     selector: "#username"
     value: "{{ secret.portal_user }}"
+    sensitive: true
   - action: fill
     selector: "#password"
     value: "{{ secret.portal_password }}"

@@ -1,0 +1,16 @@
+# Always-on evidence capture live: screenshot step + wait_for_network_idle,
+# regardless of pass/fail (visual baseline of the portal home page).
+name: Synthetic Home Evidence Capture
+checkmk_host: intranet-demo
+timeout_ms: 20000
+warn_ms: 6000
+crit_ms: 15000
+steps:
+  - action: open_url
+    url: http://intranet-demo/index.html
+  - action: wait_for_network_idle
+    timeout_ms: 5000
+  - action: screenshot
+    name: home-baseline
+  - action: check_title
+    contains: Internal Portal

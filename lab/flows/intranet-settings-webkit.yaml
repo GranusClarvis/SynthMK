@@ -1,0 +1,16 @@
+# Engine coverage live: WebKit (Safari engine) against the settings page.
+name: Synthetic Settings (WebKit)
+browser: webkit
+checkmk_host: intranet-demo
+timeout_ms: 25000
+warn_ms: 8000
+crit_ms: 20000
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: http://intranet-demo/settings.html
+  - action: check_visible_text
+    text: All systems normal
+  - action: check_checkbox
+    selector: "#notify-email"
+    checked: true

@@ -1,0 +1,22 @@
+# Real multi-step PUBLIC journey that does not bot-block headless runners
+# (Google and DuckDuckGo do; see flows/google-search.yaml in the main repo):
+# example.com -> follow its "More information" link -> land on iana.org.
+name: Synthetic Public Journey (example.com to IANA)
+timeout_ms: 30000
+warn_ms: 10000
+crit_ms: 25000
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: https://example.com/
+  - action: check_title
+    contains: Example Domain
+  - action: check_visible_text
+    text: Example Domain
+  - action: click
+    selector: "a[href*='iana.org']"
+  - action: wait_for_url
+    contains: iana.org
+  - action: check_element_count
+    selector: a
+    min: 3

@@ -6,7 +6,7 @@ SYNTHMK_HOME ?= /opt/synthmk
 
 FLOWS := $(wildcard flows/*.yaml) $(wildcard lab/flows/*.yaml)
 
-.PHONY: help ci validate validate-contract validate-export lint-flows package package-contract real-mkp runner-image lab-up lab-down install uninstall clean
+.PHONY: help ci validate validate-contract validate-export lint-flows package package-contract real-mkp real-mkp-ci runner-image lab-up lab-down install uninstall clean
 
 help:
 	@echo "SynthMK targets:"
@@ -20,6 +20,7 @@ help:
 	@echo "  make package           build dist/synthmk-<version>.mkp skeleton (deterministic)"
 	@echo "  make package-contract  assert built MKP payload has expected files/paths"
 	@echo "  make real-mkp          build a REAL installable .mkp via a running Checkmk site"
+	@echo "  make real-mkp-ci       ephemeral Checkmk: build + mkp add/enable the .mkp (Docker)"
 	@echo "  make runner-image      build the runner-node Docker image (synthmk-runner)"
 	@echo "  make lab-up / lab-down bring the LAN lab (Checkmk + runner + demo) up / down"
 	@echo "  make clean             remove dist/ and caches"
@@ -68,6 +69,12 @@ package-contract:
 # Checkmk container up: `make lab-up` or `cd lab && docker compose up -d checkmk`).
 real-mkp:
 	bash packaging/make_real_mkp.sh
+
+# Docker-gated end-to-end: spin up an EPHEMERAL Checkmk Raw site, build the real
+# .mkp, then prove the artifact `mkp add` + `mkp enable`s and lists its files.
+# Owns the container lifecycle (start/wait/teardown). Not part of `make ci`.
+real-mkp-ci:
+	bash scripts/ci_real_mkp.sh
 
 # Runner-node appliance + LAN lab (Docker). Not part of `make ci` (needs Docker).
 runner-image:

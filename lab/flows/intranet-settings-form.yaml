@@ -1,0 +1,26 @@
+# Form-control coverage live: check_checkbox (both states), select_option,
+# check_element_attribute on a link href.
+name: Synthetic Settings Form
+checkmk_host: intranet-demo
+timeout_ms: 20000
+warn_ms: 5000
+crit_ms: 15000
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: http://intranet-demo/settings.html
+  - action: check_checkbox
+    selector: "#notify-email"
+    checked: true
+  - action: check_checkbox
+    selector: "#notify-sms"
+    checked: false
+  - action: select_option
+    selector: "#region"
+    value: apac
+  - action: check_element_attribute
+    selector: "#docs-link"
+    attribute: href
+    contains: dashboard.html
+  - action: check_visible_text
+    text: All systems normal

@@ -1,0 +1,23 @@
+# v0.5 features live: include sub-flow + selector ladders + check_text_absent
+# + check_element_attribute. The login itself comes from the shared fragment.
+name: Synthetic Portal Login (shared fragment)
+checkmk_host: intranet-demo
+timeout_ms: 20000
+warn_ms: 5000
+crit_ms: 15000
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: http://intranet-demo/login.html
+  - action: include
+    flow: shared/portal-login.yaml
+  - action: wait_for_url
+    contains: dashboard.html
+  - action: check_text_absent
+    text: Invalid credentials
+  - action: check_element_attribute
+    selector: "[data-testid=welcome]"
+    attribute: data-testid
+    equals: welcome
+  - action: check_visible_text
+    text: Signed in as monitor

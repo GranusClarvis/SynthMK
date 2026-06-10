@@ -37,7 +37,7 @@ services:
     build:
       context: ..                       # repo root
       dockerfile: runner-node/Dockerfile
-    image: synthmk-runner:0.4.0
+    image: synthmk-runner:0.6.0
     container_name: synthmk-runner
     hostname: synthmk-runner
     environment:
@@ -53,6 +53,10 @@ services:
       # Management dashboard sign-in (lab value; production auto-generates a
       # random token when unset — see runner-node/admin_server.py).
       - SYNTHMK_ADMIN_TOKEN=${SYNTHMK_ADMIN_TOKEN:-synthmk-lab-admin}
+      # v0.5+: script flows are trust-gated; the lab opts in to demo them.
+      - SYNTHMK_ALLOW_SCRIPTS=1
+      # v0.5+: read-only dashboard role (lab value).
+      - SYNTHMK_VIEWER_TOKEN=${SYNTHMK_VIEWER_TOKEN:-synthmk-lab-viewer}
     volumes:
       # rw in the lab so the dashboard's flow editor can be demonstrated;
       # mount :ro for a view-only dashboard.

@@ -1,0 +1,10 @@
+# Script flow live (trust gate must be open: SYNTHMK_ALLOW_SCRIPTS=1 in the
+# lab compose). Full Playwright Python with named step timings + secrets.
+name: Synthetic Scripted Login
+type: script
+script: scripts/lab_login.py
+checkmk_host: intranet-demo
+timeout_ms: 20000
+warn_ms: 6000
+crit_ms: 15000
+screenshot_on_failure: true

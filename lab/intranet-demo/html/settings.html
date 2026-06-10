@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<!--
+  SynthMK lab settings page. Carries the elements the v0.5/v0.6 step
+  vocabulary exercises live: a pre-checked checkbox, an unchecked one,
+  a <select>, an attributed link, a search input (builtin-variable fills),
+  and an MFA-style code field (TOTP substitution).
+  Reachable without a session so simple flows can target it directly.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Internal Portal — Settings</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; }
+    fieldset { margin-bottom: 1.2rem; }
+  </style>
+</head>
+<body data-testid="settings">
+  <h1>Settings</h1>
+  <p data-testid="status-line">All systems normal</p>
+
+  <fieldset>
+    <legend>Notifications</legend>
+    <label><input type="checkbox" id="notify-email" checked> Email alerts</label><br>
+    <label><input type="checkbox" id="notify-sms"> SMS alerts</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Defaults</legend>
+    <label>Region
+      <select id="region" name="region">
+        <option value="eu">Europe</option>
+        <option value="us">United States</option>
+        <option value="apac">Asia Pacific</option>
+      </select>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Search</legend>
+    <input id="audit-search" name="audit-search" placeholder="search audit log">
+  </fieldset>
+
+  <fieldset>
+    <legend>Security</legend>
+    <label>MFA code <input id="mfa-code" name="mfa-code" maxlength="6"></label>
+  </fieldset>
+
+  <p><a id="docs-link" data-testid="docs-link" href="/dashboard.html">Back to dashboard</a></p>
+</body>
+</html>

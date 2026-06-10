@@ -1,0 +1,16 @@
+# Engine coverage live: the same home check on the bundled Firefox engine.
+name: Synthetic Intranet Home (Firefox)
+browser: firefox
+checkmk_host: intranet-demo
+timeout_ms: 25000
+warn_ms: 8000
+crit_ms: 20000
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: http://intranet-demo/index.html
+  - action: check_title
+    contains: Internal Portal
+  - action: check_element_count
+    selector: a
+    min: 1

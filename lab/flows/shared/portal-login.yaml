@@ -1,0 +1,25 @@
+# Reusable login fragment for the lab portal, spliced by other flows with
+#   - action: include
+#     flow: shared/portal-login.yaml
+# Uses selector fallback ladders so a markup change on one selector form
+# does not break every flow that logs in.
+name: lab shared login (fragment)
+steps:
+  - action: fill
+    selector:
+      - "[data-testid=username]"
+      - "#username"
+      - "input[name=username]"
+    value: "{{ secret.portal_user }}"
+    sensitive: true
+  - action: fill
+    selector:
+      - "#password"
+      - "input[type=password]"
+    value: "{{ secret.portal_password }}"
+    sensitive: true
+  - action: click
+    selector:
+      - "[data-testid=login-submit]"
+      - "#login-submit"
+      - "button[type=submit]"

@@ -1,0 +1,18 @@
+# Builtin per-run variables live: a unique search term is typed each run.
+name: Synthetic Audit Search (unique value)
+checkmk_host: intranet-demo
+timeout_ms: 20000
+warn_ms: 5000
+crit_ms: 15000
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: http://intranet-demo/settings.html
+  - action: fill
+    selector: "#audit-search"
+    value: "ticket-{{ var.uuid }}"
+  - action: press
+    selector: "#audit-search"
+    key: Tab
+  - action: check_text_absent
+    text: Server Error

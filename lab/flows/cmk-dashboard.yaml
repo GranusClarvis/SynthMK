@@ -1,0 +1,35 @@
+# SynthMK monitoring Checkmk itself: log into the lab Checkmk site's web UI
+# and verify the monitoring dashboard renders. Selector ladder on the login
+# form, credential from the secrets file, redacted everywhere.
+name: Synthetic Checkmk UI Login
+checkmk_host: cmk
+timeout_ms: 30000
+warn_ms: 10000
+crit_ms: 25000
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: http://cmk:5000/cmk/check_mk/login.py
+  - action: wait_for_element
+    selector: "#input_user"
+  - action: fill
+    selector:
+      - "#input_user"
+      - "input[name=_username]"
+    value: cmkadmin
+  - action: fill
+    selector:
+      - "#input_pass"
+      - "input[name=_password]"
+    value: "{{ secret.cmk_password }}"
+    sensitive: true
+  - action: click
+    selector:
+      - "#_login"
+      - "input[name=_login]"
+  - action: wait_for_url
+    contains: index.py
+  - action: check_title
+    contains: Checkmk
+  - action: check_text_absent
+    text: Invalid credentials

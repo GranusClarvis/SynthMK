@@ -1,0 +1,22 @@
+# Public search journey (Wikipedia tolerates headless runners; verified
+# repeatedly since v0.2). fill -> Enter -> redirect -> assertions.
+name: Synthetic Wikipedia Search (lab)
+timeout_ms: 30000
+warn_ms: 12000
+crit_ms: 25000
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: https://en.wikipedia.org/wiki/Main_Page
+  - action: wait_for_element
+    selector: "input#searchInput"
+  - action: fill
+    selector: "input#searchInput"
+    value: Synthetic monitoring
+  - action: press
+    selector: "input#searchInput"
+    key: Enter
+  - action: wait_for_url
+    contains: Synthetic_monitoring
+  - action: check_visible_text
+    text: Synthetic monitoring

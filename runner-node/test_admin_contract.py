@@ -205,9 +205,98 @@ def main() -> int:
             check("audit captured the failed login", len(failed_login) >= 1)
             code, _ = req(port, "/api/audit", token=VIEWER_TOK)
             check("audit is admin-only", code == 403)
+
+            print("== v0.6.0: DevTools import endpoint ==")
+            recording = {"title": "Imported Login", "steps": [
+                {"type": "navigate", "url": "https://x.example/login"},
+                {"type": "change", "value": "bob",
+                 "selectors": [["#user"], ["xpath///*[@id='user']"]]},
+                {"type": "keyDown", "key": "Enter"},
+            ]}
+            code, d = req(port, "/api/import/devtools", "POST",
+                          {"recording": recording}, token=ADMIN_TOK, csrf=True)
+            check("import endpoint converts a recording",
+                  code == 200 and d.get("ok")
+                  and "open_url" in d["yaml"] and d["name"] == "Imported Login")
+            code, _ = req(port, "/api/import/devtools", "POST",
+                          {"recording": "not-an-object"},
+                          token=ADMIN_TOK, csrf=True)
+            check("import rejects non-object payloads", code == 400)
+            code, _ = req(port, "/api/import/devtools", "POST",
+                          {"recording": {"steps": [{"type": "close"}]}},
+                          token=ADMIN_TOK, csrf=True)
+            check("import with no usable steps is 422", code == 422)
+
+            print("== v0.6.0: security headers + login throttle ==")
+            r = urllib.request.Request(f"http://127.0.0.1:{port}/login")
+            with urllib.request.urlopen(r, timeout=10) as resp:
+                csp = resp.headers.get("Content-Security-Policy", "")
+                xfo = resp.headers.get("X-Frame-Options", "")
+            check("HTML responses carry a CSP",
+                  "default-src 'none'" in csp and "frame-ancestors 'none'" in csp)
+            check("HTML responses deny framing", xfo == "DENY")
+
+            for _ in range(5):
+                req(port, "/api/login?token=wrong-again")
+            code, d = req(port, "/api/login?token=wrong-again")
+            check("6th bad login from one IP is throttled (429)", code == 429)
+            code, _ = req(port, f"/api/login?token={ADMIN_TOK}")
+            check("throttle blocks even the right token while locked", code == 429)
         finally:
             proc.kill()
             proc.wait(timeout=5)
+
+    print("== v0.6.0: dashboard TLS ==")
+    import shutil
+    import ssl
+    if shutil.which("openssl"):
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            subprocess.run(
+                ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+                 "-keyout", str(tdp / "key.pem"), "-out", str(tdp / "cert.pem"),
+                 "-days", "1", "-subj", "/CN=localhost"],
+                check=True, capture_output=True, timeout=60)
+            (tdp / "flows").mkdir()
+            (tdp / "flows.conf").write_text("")
+            port = free_port()
+            env = dict(os.environ,
+                       SYNTHMK_HOME=str(ROOT),
+                       SYNTHMK_FLOWS=str(tdp / "flows"),
+                       SYNTHMK_FLOWS_CONF=str(tdp / "flows.conf"),
+                       SYNTHMK_SPOOL=str(tdp / "flows"),
+                       SYNTHMK_RUN_NOW_DIR=str(tdp / "run-now"),
+                       SYNTHMK_ADMIN_PORT=str(port),
+                       SYNTHMK_ADMIN_BIND="127.0.0.1",
+                       SYNTHMK_ADMIN_TOKEN=ADMIN_TOK,
+                       SYNTHMK_AUDIT_LOG=str(tdp / "audit.log"),
+                       SYNTHMK_ADMIN_TOKEN_FILE=str(tdp / "token"),
+                       SYNTHMK_ADMIN_TLS_CERT=str(tdp / "cert.pem"),
+                       SYNTHMK_ADMIN_TLS_KEY=str(tdp / "key.pem"))
+            proc = subprocess.Popen([sys.executable, str(HERE / "admin_server.py")],
+                                    env=env, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL)
+            try:
+                for _ in range(100):
+                    try:
+                        socket.create_connection(("127.0.0.1", port), 0.2).close()
+                        break
+                    except OSError:
+                        time.sleep(0.1)
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                r = urllib.request.Request(
+                    f"https://127.0.0.1:{port}/api/state",
+                    headers={"Authorization": f"Bearer {ADMIN_TOK}"})
+                with urllib.request.urlopen(r, timeout=10, context=ctx) as resp:
+                    ok_tls = resp.status == 200 and b'"role"' in resp.read()
+                check("dashboard serves HTTPS when cert+key are configured", ok_tls)
+            finally:
+                proc.kill()
+                proc.wait(timeout=5)
+    else:
+        print("  skip - openssl not available; TLS test skipped")
 
     print(f"\n{PASS} checks passed, {len(FAILS)} failed.")
     return 1 if FAILS else 0
