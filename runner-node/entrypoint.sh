@@ -67,10 +67,20 @@ if [[ "${SYNTHMK_ADMIN:-on}" != "off" ]]; then
   "${RUNAS[@]}" python3 "$SYNTHMK_HOME/runner-node/admin_server.py" &
 fi
 
-# Reap children cleanly on stop.
-trap 'kill $(jobs -p) 2>/dev/null' TERM INT
+# Graceful shutdown: forward SIGTERM/SIGINT to every child and wait for them.
+# The agent transport runs in the BACKGROUND (not exec'd) so this bash process
+# stays PID-relative to its children and the trap actually fires on stop. With
+# exec, the trap was replaced and the scheduler/dashboard/shot-server were
+# hard-killed, risking a half-written spool or a truncated audit line.
+shutdown() {
+  echo "entrypoint: shutting down, signalling children" >&2
+  kill $(jobs -p) 2>/dev/null || true
+  wait 2>/dev/null || true
+  exit 0
+}
+trap shutdown TERM INT
 
-# 4. agent transport in the foreground (the container's main process).
+# 4. agent transport (background; this script waits on it as the main process).
 if [[ "$AGENT_MODE" == "official" ]]; then
   # Production: version-matched official Checkmk agent + TLS controller.
   # Requires a one-time `register_agent.sh` run (downloads the agent from your
@@ -88,9 +98,16 @@ if [[ "$AGENT_MODE" == "official" ]]; then
   # the controller pulls output through.
   socat "UNIX-LISTEN:/run/check-mk-agent.socket,fork,mode=666" \
         "EXEC:/usr/bin/check_mk_agent" >/var/log/synthmk-agent-socket.log 2>&1 &
-  exec cmk-agent-ctl daemon
+  cmk-agent-ctl daemon &
 else
   # Lab/simple: plaintext socat transport. Firewall 6556 to the Checkmk server.
-  exec "${RUNAS[@]}" socat -T30 "TCP-LISTEN:$AGENT_PORT,reuseaddr,fork,crlf" \
-       "EXEC:bash $SYNTHMK_HOME/runner-node/agent_output.sh"
+  "${RUNAS[@]}" socat -T30 "TCP-LISTEN:$AGENT_PORT,reuseaddr,fork,crlf" \
+       "EXEC:bash $SYNTHMK_HOME/runner-node/agent_output.sh" &
 fi
+
+# Wait on all background services. `wait -n` returns when ANY exits; if the
+# agent transport dies the container should fail (and be restarted) rather
+# than linger with a dead transport, so we re-raise by exiting non-zero.
+wait -n
+echo "entrypoint: a service exited; stopping container" >&2
+shutdown

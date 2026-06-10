@@ -50,16 +50,30 @@ PASSWORD_HINT_RE = re.compile(r"pass(word|wd)?|pwd", re.IGNORECASE)
 REPLAY_KEYS = {"Enter", "Tab", "Escape", "ArrowDown", "ArrowUp", "PageDown", "PageUp"}
 
 
+# Cap on selector candidates kept per element. DevTools emits a handful;
+# a hostile or pathological recording could carry thousands. A real element
+# never needs more than a few resilient locators, and the runner tries them
+# in order on every poll, so an unbounded ladder is both useless and a DoS.
+MAX_CANDIDATES_PER_STEP = 8
+# Cap on raw candidate entries scanned, so even truncating cannot be made
+# expensive by a huge input array.
+MAX_RAW_SCAN = 200
+
+
 def convert_selectors(raw: list, notes: list[str]) -> list[str]:
     """DevTools selectors[] (list of candidate arrays) -> SynthMK ladder."""
     primary: list[str] = []   # css / test-attribute / pierce
     xpath: list[str] = []
     text: list[str] = []      # aria/text fallbacks
-    for cand in raw or []:
+    scanned = (raw or [])[:MAX_RAW_SCAN]
+    if raw and len(raw) > MAX_RAW_SCAN:
+        notes.append(f"recording had {len(raw)} selector candidates for one "
+                     f"element; scanned the first {MAX_RAW_SCAN}")
+    for cand in scanned:
         if not isinstance(cand, list) or not cand:
             continue
         if len(cand) > 1:
-            notes.append(f"dropped iframe-scoped selector candidate {cand}")
+            notes.append("dropped an iframe-scoped selector candidate")
             continue
         sel = str(cand[0])
         if sel.startswith("aria/"):
@@ -76,6 +90,10 @@ def convert_selectors(raw: list, notes: list[str]) -> list[str]:
     for sel in primary + xpath + text:
         if sel not in ladder:
             ladder.append(sel)
+    if len(ladder) > MAX_CANDIDATES_PER_STEP:
+        notes.append(f"kept the {MAX_CANDIDATES_PER_STEP} strongest of "
+                     f"{len(ladder)} selector candidates for an element")
+        ladder = ladder[:MAX_CANDIDATES_PER_STEP]
     return ladder
 
 

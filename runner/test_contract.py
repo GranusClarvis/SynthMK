@@ -373,10 +373,14 @@ def main() -> int:
         def wait_for_timeout(self, ms):
             pass
 
-    chosen = R._resolve_selector(LadderPage({"#go"}), ["[data-testid=go]", "#go"], 200)
+    chosen, budget = R._resolve_selector(LadderPage({"#go"}), ["[data-testid=go]", "#go"], 200)
     check("ladder falls back to the first matching candidate", chosen == "#go")
-    chosen = R._resolve_selector(LadderPage({"[data-testid=go]", "#go"}),
-                                 ["[data-testid=go]", "#go"], 200)
+    check("ladder returns a positive remaining budget (floored)", budget >= 250)
+    # A single selector returns the FULL budget (no resolution time spent).
+    chosen, budget = R._resolve_selector(FakePage(), "#only", 5000)
+    check("single selector keeps the full timeout budget", chosen == "#only" and budget == 5000)
+    chosen, _ = R._resolve_selector(LadderPage({"[data-testid=go]", "#go"}),
+                                    ["[data-testid=go]", "#go"], 200)
     check("ladder prefers the earlier candidate", chosen == "[data-testid=go]")
     try:
         R._resolve_selector(LadderPage(set()), ["#a", "#b"], 0)
@@ -712,8 +716,114 @@ def main() -> int:
                            "steps": [{"action": "open_url", "url": "x"}]}, source="t")
     check("lint rejects max_attempts > 3", any("max_attempts" in e for e in errs))
 
+    print("== v0.7.0: cert check type ==")
+    cert_flow = {"name": "C", "type": "cert", "host": "x.example",
+                 "warn_days": 21, "crit_days": 7}
+    check("_cert_host from host/port", R._cert_host(cert_flow) == ("x.example", 443))
+    check("_cert_host parses url + port",
+          R._cert_host({"type": "cert", "url": "https://y.example:8443/x"})
+          == ("y.example", 8443))
+    # render bands without a network call by stubbing _fetch_cert_expiry
+    real_fetch = R._fetch_cert_expiry
+    try:
+        R._fetch_cert_expiry = lambda h, p, t, v: (90.0, "Jan 1 2027", True)
+        res = R.run_flow(_cert_tmp(_tf, cert_flow))
+        check("healthy cert is OK with days-left metric",
+              res.status == R.OK and ("cert_days_left", 90.0) in (res.extra_metrics or []))
+        R._fetch_cert_expiry = lambda h, p, t, v: (10.0, "soon", True)
+        res = R.run_flow(_cert_tmp(_tf, cert_flow))
+        check("cert below warn_days is WARN", res.status == R.WARN)
+        R._fetch_cert_expiry = lambda h, p, t, v: (3.0, "very soon", True)
+        res = R.run_flow(_cert_tmp(_tf, cert_flow))
+        check("cert below crit_days is CRIT", res.status == R.CRIT)
+        R._fetch_cert_expiry = lambda h, p, t, v: (60.0, "ok", False)
+        res = R.run_flow(_cert_tmp(_tf, cert_flow))
+        check("unverified chain is noted in the summary",
+              "chain not verified" in res.summary)
+    finally:
+        R._fetch_cert_expiry = real_fetch
+    check("cert perfdata carries the extra metric",
+          "cert_days_left=" in R.FlowResult(service="C",
+                                            extra_metrics=[("cert_days_left", 90.0)]).perfdata())
+    errs, _ = L.lint_flow({"name": "c", "type": "cert"}, source="t")
+    check("lint requires host/url on cert", any("requires 'host' or 'url'" in e for e in errs))
+    errs, _ = L.lint_flow({"name": "c", "type": "cert", "host": "x",
+                           "warn_days": 5, "crit_days": 30}, source="t")
+    check("lint rejects crit_days > warn_days", any("crit_days" in e for e in errs))
+    errs, _ = L.lint_flow({"name": "c", "type": "cert", "host": "x", "port": 70000},
+                          source="t")
+    check("lint rejects an out-of-range port", any("port" in e for e in errs))
+
+    print("== v0.7.0: trace artifact in output ==")
+    traced = R.FlowResult(service="S", status=R.CRIT, duration_ms=10, summary="boom",
+                          screenshot="screenshots/s-fail.png",
+                          trace="screenshots/s-fail.trace.zip",
+                          shot_base_url="http://runner:9180/")
+    line = traced.checkmk_line()
+    check("trace renders a clickable link",
+          '<a href="http://runner:9180/s-fail.trace.zip">trace</a>' in line)
+    import json as _json
+    j = _json.loads(traced.to_json())
+    check("trace_url present in JSON output", j["trace_url"].endswith("s-fail.trace.zip"))
+
+    print("== v0.7.0: retry resets per-run state ==")
+    with _tf.TemporaryDirectory() as td:
+        f = Path(td) / "r.yaml"
+        f.write_text("name: R\nmax_attempts: 2\nsteps:\n  - action: open_url\n    url: x\n")
+        seen = []
+        real_run_flow = R.run_flow
+
+        def capture(path, **kwargs):
+            seen.append(S.substitute("{{ var.uuid }}", None))
+            return R.FlowResult(service="R", status=R.CRIT, summary="down")
+        R.run_flow = capture
+        try:
+            S.reset()
+            R.run_with_retries(f)
+            check("each retry attempt gets a fresh var.uuid",
+                  len(seen) == 2 and seen[0] != seen[1])
+        finally:
+            R.run_flow = real_run_flow
+            S.reset()
+
+    print("== v0.7.0: include/script path-escape guard ==")
+    with _tf.TemporaryDirectory() as td:
+        tdp = Path(td)
+        (tdp / "flows").mkdir()
+        secret = tdp / "secret.yaml"
+        secret.write_text("name: x\nsteps:\n  - action: open_url\n    url: x\n")
+        main = tdp / "flows" / "m.yaml"
+        main.write_text("name: M\nsteps:\n"
+                        "  - action: include\n    flow: ../secret.yaml\n")
+        try:
+            R.load_flow(main)
+            check("include escaping the flow dir is refused", False)
+        except R.FlowError as fe:
+            check("include escaping the flow dir is refused",
+                  fe.status == R.UNKNOWN and "escapes" in str(fe))
+        os.environ["SYNTHMK_ALLOW_SCRIPTS"] = "1"
+        (tdp / "evil.py").write_text("def run(p, a): pass\n")
+        smain = tdp / "flows" / "s.yaml"
+        smain.write_text("name: S\ntype: script\nscript: ../evil.py\n")
+        try:
+            R.load_flow(smain)
+            check("script escaping the flow dir is refused", False)
+        except R.FlowError as fe:
+            check("script escaping the flow dir is refused", "escapes" in str(fe))
+        os.environ.pop("SYNTHMK_ALLOW_SCRIPTS", None)
+
     print(f"\n{PASS} checks passed, {len(FAILS)} failed.")
     return 1 if FAILS else 0
+
+
+def _cert_tmp(_tf, flow):
+    """Write a cert flow to a temp file and return its path (helper for tests)."""
+    import tempfile
+    import yaml as _yaml
+    d = tempfile.mkdtemp()
+    p = Path(d) / "cert.yaml"
+    p.write_text(_yaml.safe_dump(flow))
+    return p
 
 
 if __name__ == "__main__":

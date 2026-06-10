@@ -108,12 +108,26 @@ def check_synthmk(item: str, params: Mapping[str, Any], section: Section) -> Che
         # Off for this host (scope the rule narrowly; single sanitized line).
         yield Result(state=State.OK, notice=f'<a href="{shot}" target="_blank">Failure screenshot</a>')
 
+    trace = entry.get("trace_url")
+    if trace:
+        # Playwright trace.zip: download and open at trace.playwright.dev for a
+        # step-by-step replay with DOM snapshots.
+        yield Result(state=State.OK, notice=f'<a href="{trace}" target="_blank">Playwright trace</a>')
+
     steps = entry.get("steps") or []
     if steps:
         breakdown = " → ".join(f"{s.get('label', '?')} {s.get('ms', 0)}ms" for s in steps)
         yield Result(state=State.OK, notice=f"Steps: {breakdown}")
         for step in steps:
             yield Metric(_metric_name(step.get("label", "step")), float(step.get("ms", 0)) / 1000.0)
+
+    # Extra named metrics: cert_days_left from cert checks, and the runner's
+    # generic list ([{label, value}]).
+    for extra in (entry.get("extras") or []):
+        try:
+            yield Metric(_metric_name(extra.get("label", "extra")), float(extra.get("value")))
+        except (TypeError, ValueError):
+            continue
 
     # Generic extra metrics (used by the SynthMK Scheduler self-service:
     # flows / active / overdue / runs / overlap skips ...).

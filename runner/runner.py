@@ -86,6 +86,10 @@ class FlowResult:
     # Per-step timings [(metric_label, ms)], emitted as extra perfdata so
     # Checkmk graphs where time is spent inside the journey, not just totals.
     step_timings: list[tuple[str, int]] | None = None
+    # Playwright trace.zip captured on failure (trace_on_failure: true).
+    trace: str | None = None
+    # Unit-less extra metrics [(label, value)], e.g. cert_days_left.
+    extra_metrics: list[tuple[str, float]] | None = None
 
     def perfdata(self) -> str:
         warn = "" if self.warn_ms is None else str(self.warn_ms)
@@ -94,21 +98,35 @@ class FlowResult:
         parts = [f"duration={self.duration_ms}ms;{warn};{crit}"]
         for label, ms in (self.step_timings or []):
             parts.append(f"{label}={ms}ms")
+        for label, value in (self.extra_metrics or []):
+            parts.append(f"{label}={value}")
         return "|".join(parts)
 
+    def _artifact_url(self, path: str) -> str | None:
+        """Tokenized node-served URL for an artifact (screenshot/trace)."""
+        if not self.shot_base_url:
+            return None
+        name = os.path.basename(path)
+        url = f"{self.shot_base_url.rstrip('/')}/{name}"
+        token = _shot_token(name)
+        if token:
+            url += f"?t={token}"
+        return url
+
     def _screenshot_suffix(self) -> str:
-        if not self.screenshot:
-            return ""
-        if self.shot_base_url:
-            # Clickable link rendered in the Checkmk service Details — requires the
-            # "Escape HTML codes in service output" rule turned Off for this host.
-            name = os.path.basename(self.screenshot)
-            url = f"{self.shot_base_url.rstrip('/')}/{name}"
-            token = _shot_token(name)
-            if token:
-                url += f"?t={token}"
-            return f' <a href="{url}">screenshot</a>'
-        return f" (screenshot: {self.screenshot})"
+        suffix = ""
+        if self.screenshot:
+            # Clickable links rendered in the Checkmk service Details — require
+            # the "Escape HTML codes in service output" rule turned Off for
+            # this host.
+            url = self._artifact_url(self.screenshot)
+            suffix += (f' <a href="{url}">screenshot</a>' if url
+                       else f" (screenshot: {self.screenshot})")
+        if self.trace:
+            url = self._artifact_url(self.trace)
+            suffix += (f' <a href="{url}">trace</a>' if url
+                       else f" (trace: {self.trace})")
+        return suffix
 
     def to_json(self) -> str:
         """Machine-readable result for the native <<<synthmk>>> agent section.
@@ -118,13 +136,6 @@ class FlowResult:
         richer than the local-check line. All text passes the same redaction.
         """
         import json
-        shot_url = None
-        if self.screenshot and self.shot_base_url:
-            name = os.path.basename(self.screenshot)
-            shot_url = f"{self.shot_base_url.rstrip('/')}/{name}"
-            token = _shot_token(name)
-            if token:
-                shot_url += f"?t={token}"
         return json.dumps({
             "service": self.service,
             "status": self.status,
@@ -134,7 +145,10 @@ class FlowResult:
             "summary": _oneline(self.summary),
             "failed_step": self.step_index,
             "steps": [{"label": label, "ms": ms} for label, ms in (self.step_timings or [])],
-            "screenshot_url": shot_url,
+            "screenshot_url": self._artifact_url(self.screenshot) if self.screenshot else None,
+            "trace_url": self._artifact_url(self.trace) if self.trace else None,
+            "extras": [{"label": label, "value": value}
+                       for label, value in (self.extra_metrics or [])],
             "dynamic": self.dynamic,
         }, sort_keys=True)
 
@@ -194,6 +208,12 @@ def load_flow(path: Path) -> dict[str, Any]:
     data = yaml.safe_load(path.read_text())
     if not isinstance(data, dict):
         raise FlowError(f"Flow file {path} did not parse to a mapping", UNKNOWN)
+    if str(data.get("type", "flow")) == "cert":
+        # Certificate checks need no browser and no steps; just an endpoint.
+        if not (data.get("host") or data.get("url")):
+            raise FlowError(f"Flow file {path} is type: cert but has no 'host' or 'url'",
+                            UNKNOWN)
+        return data
     if str(data.get("type", "flow")) == "script":
         # Script flows run operator-authored Playwright Python with full page
         # access — real code, no YAML ceiling. That power is an explicit trust
@@ -207,13 +227,28 @@ def load_flow(path: Path) -> dict[str, Any]:
             raise FlowError(f"Flow file {path} is type: script but has no 'script'", UNKNOWN)
         if Path(ref).is_absolute():
             raise FlowError("script path must be relative to the flow file", UNKNOWN)
-        if not (path.parent / ref).is_file():
+        # Resolve symlinks and confirm the script stays inside the flow's
+        # directory tree: a flow must not load code from /etc or a sibling
+        # project via `script: ../../x.py` or a planted symlink.
+        target = (path.parent / ref).resolve()
+        if not _within(target, path.parent):
+            raise FlowError("script path escapes the flow directory", UNKNOWN)
+        if not target.is_file():
             raise FlowError(f"script not found: {ref}", UNKNOWN)
         return data
     if "steps" not in data or not isinstance(data["steps"], list):
         raise FlowError(f"Flow file {path} missing a 'steps' list", UNKNOWN)
-    data["steps"] = expand_includes(data["steps"], path.parent)
+    data["steps"] = expand_includes(data["steps"], path.parent, root=path.parent)
     return data
+
+
+def _within(target: Path, root: Path) -> bool:
+    """True if `target` resolves inside `root` (symlink-aware boundary check)."""
+    try:
+        target.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
 
 
 # Sub-flow inclusion (`action: include, flow: shared/login.yaml`): reuse one
@@ -223,8 +258,9 @@ MAX_INCLUDE_DEPTH = 3
 MAX_EXPANDED_STEPS = 200
 
 
-def expand_includes(steps: list, base_dir: Path,
+def expand_includes(steps: list, base_dir: Path, *, root: Path | None = None,
                     _stack: tuple[str, ...] = ()) -> list:
+    root = root or base_dir
     out: list = []
     for step in steps:
         if not (isinstance(step, dict) and step.get("action") == "include"):
@@ -236,6 +272,10 @@ def expand_includes(steps: list, base_dir: Path,
         if Path(ref).is_absolute():
             raise FlowError(f"include path must be relative: {ref}", UNKNOWN)
         target = (base_dir / ref).resolve()
+        # Confine includes to the top-level flow's directory tree: a flow must
+        # not splice steps from outside it via `../` or a planted symlink.
+        if not _within(target, root):
+            raise FlowError(f"include {ref} escapes the flow directory", UNKNOWN)
         if str(target) in _stack:
             raise FlowError(f"include cycle via {ref}", UNKNOWN)
         if len(_stack) >= MAX_INCLUDE_DEPTH:
@@ -249,7 +289,8 @@ def expand_includes(steps: list, base_dir: Path,
         sub = data.get("steps") if isinstance(data, dict) else None
         if not isinstance(sub, list) or not sub:
             raise FlowError(f"include {ref} has no 'steps' list", UNKNOWN)
-        out.extend(expand_includes(sub, target.parent, _stack + (str(target),)))
+        out.extend(expand_includes(sub, target.parent, root=root,
+                                   _stack=_stack + (str(target),)))
     if len(out) > MAX_EXPANDED_STEPS:
         raise FlowError(f"flow expands to more than {MAX_EXPANDED_STEPS} steps", UNKNOWN)
     return out
@@ -264,16 +305,23 @@ def _selector_candidates(spec: Any) -> list[str]:
     return [str(spec)]
 
 
-def _resolve_selector(page, spec: Any, timeout: int) -> str:
+def _resolve_selector(page, spec: Any, timeout: int) -> tuple[str, int]:
+    """Resolve a selector (or fallback ladder) to (selector, remaining_ms).
+
+    A single selector returns instantly with the full budget. A ladder polls
+    its candidates until one matches, and returns the time LEFT so the caller's
+    action does not get a second full timeout on top of resolution time (the
+    whole step stays inside one budget)."""
     cands = _selector_candidates(spec)
     if len(cands) == 1:
-        return cands[0]
+        return cands[0], timeout
     deadline = time.monotonic() + timeout / 1000.0
     while True:
         for cand in cands:
             try:
                 if page.locator(cand).count() > 0:
-                    return cand
+                    remaining = int((deadline - time.monotonic()) * 1000)
+                    return cand, max(remaining, 250)  # floor so the action can act
             except Exception:
                 continue  # one invalid candidate must not kill the ladder
         if time.monotonic() >= deadline:
@@ -316,7 +364,8 @@ def _run_step(page, step: dict[str, Any], default_timeout: int, ctx: dict[str, A
         url = _substitute(step["url"])
         page.goto(url, timeout=timeout, wait_until="domcontentloaded")
     elif action == "click":
-        page.click(_resolve_selector(page, step["selector"], timeout), timeout=timeout)
+        sel, budget = _resolve_selector(page, step["selector"], timeout)
+        page.click(sel, timeout=budget)
     elif action == "fill":
         value = _substitute(str(step.get("value", "")))
         # A sensitive fill (passwords, tokens) is never echoed anywhere and
@@ -324,30 +373,33 @@ def _run_step(page, step: dict[str, Any], default_timeout: int, ctx: dict[str, A
         if step.get("sensitive"):
             secret_source.register_sensitive(value)
             ctx["sensitive_used"] = True
-        page.fill(_resolve_selector(page, step["selector"], timeout), value, timeout=timeout)
+        sel, budget = _resolve_selector(page, step["selector"], timeout)
+        page.fill(sel, value, timeout=budget)
     elif action == "press":
         # Key press, optionally scoped to a selector (else the focused element).
         key = str(step["key"])
         if step.get("selector"):
-            page.press(_resolve_selector(page, step["selector"], timeout), key, timeout=timeout)
+            sel, budget = _resolve_selector(page, step["selector"], timeout)
+            page.press(sel, key, timeout=budget)
         else:
             page.keyboard.press(key)
     elif action == "select_option":
         # Match by value first; fall back to visible label for recorder output.
-        sel = _resolve_selector(page, step["selector"], timeout)
+        sel, budget = _resolve_selector(page, step["selector"], timeout)
         value = _substitute(str(step.get("value", "")))
         try:
-            page.select_option(sel, value=value, timeout=timeout)
+            page.select_option(sel, value=value, timeout=budget)
         except Exception:
             try:
-                page.select_option(sel, label=value, timeout=timeout)
+                page.select_option(sel, label=value, timeout=budget)
             except Exception:
                 raise FlowError(f"Could not select option '{value}' in '{sel}'")
     elif action == "hover":
-        page.hover(_resolve_selector(page, step["selector"], timeout), timeout=timeout)
+        sel, budget = _resolve_selector(page, step["selector"], timeout)
+        page.hover(sel, timeout=budget)
     elif action == "scroll_into_view":
-        sel = _resolve_selector(page, step["selector"], timeout)
-        page.locator(sel).first.scroll_into_view_if_needed(timeout=timeout)
+        sel, budget = _resolve_selector(page, step["selector"], timeout)
+        page.locator(sel).first.scroll_into_view_if_needed(timeout=budget)
     elif action == "wait_ms":
         page.wait_for_timeout(int(step["ms"]))
     elif action == "wait_for_network_idle":
@@ -380,9 +432,9 @@ def _run_step(page, step: dict[str, Any], default_timeout: int, ctx: dict[str, A
                 if not step.get("optional", True):
                     raise FlowError(f"Screenshot capture failed: {exc}")
     elif action == "wait_for_element":
-        sel = _resolve_selector(page, step["selector"], timeout)
+        sel, budget = _resolve_selector(page, step["selector"], timeout)
         try:
-            page.wait_for_selector(sel, timeout=timeout, state="visible")
+            page.wait_for_selector(sel, timeout=budget, state="visible")
         except Exception:
             raise FlowError(f"Element '{sel}' not found within {timeout}ms")
     elif action == "wait_for_url":
@@ -433,7 +485,7 @@ def _run_step(page, step: dict[str, Any], default_timeout: int, ctx: dict[str, A
         if n and any(loc.nth(i).is_visible() for i in range(n)):
             raise FlowError(f"Text '{text}' is visible on the page (expected absent)")
     elif action == "check_element_attribute":
-        sel = _resolve_selector(page, step["selector"], timeout)
+        sel, _ = _resolve_selector(page, step["selector"], timeout)
         attr = str(step["attribute"])
         value = page.locator(sel).first.get_attribute(attr)
         if value is None:
@@ -448,7 +500,7 @@ def _run_step(page, step: dict[str, Any], default_timeout: int, ctx: dict[str, A
                 f"(expected to contain '{step['contains']}')"
             )
     elif action == "check_checkbox":
-        sel = _resolve_selector(page, step["selector"], timeout)
+        sel, _ = _resolve_selector(page, step["selector"], timeout)
         want = bool(step.get("checked", True))
         got = bool(page.locator(sel).first.is_checked())
         if got != want:
@@ -611,6 +663,108 @@ def _execute_script_flow(flow: dict[str, Any], path: Path, page,
             result.screenshot = shot
 
 
+def _cert_host(flow: dict[str, Any]) -> tuple[str, int]:
+    """Endpoint from `host:`/`port:` or parsed out of `url:`."""
+    host = str(flow.get("host", "")).strip()
+    port = int(flow.get("port", 443))
+    if not host and flow.get("url"):
+        from urllib.parse import urlparse
+        parsed = urlparse(str(flow["url"]))
+        host = parsed.hostname or ""
+        if parsed.port:
+            port = parsed.port
+    return host, port
+
+
+def _fetch_cert_expiry(host: str, port: int, timeout_s: float,
+                       require_valid_chain: bool) -> tuple[float, str, bool]:
+    """(days_left, notAfter string, chain_verified) for the endpoint's cert.
+
+    First a normally-verified handshake (system CA store). If verification
+    fails and require_valid_chain is off, fall back to an unverified fetch
+    and parse the DER via openssl so internal-CA and self-signed certs can
+    still be expiry-monitored (their chains are the operator's business; the
+    summary says the chain was not verified).
+    """
+    import datetime
+    import socket as socket_mod
+    import ssl
+
+    def handshake(ctx) -> tuple[dict | None, bytes | None]:
+        with socket_mod.create_connection((host, port), timeout=timeout_s) as sock:
+            with ctx.wrap_socket(sock, server_hostname=host) as tls:
+                return tls.getpeercert(), tls.getpeercert(binary_form=True)
+
+    try:
+        cert, _ = handshake(ssl.create_default_context())
+        not_after = str(cert.get("notAfter", ""))
+        expires = ssl.cert_time_to_seconds(not_after)
+        return ((expires - time.time()) / 86400.0, not_after, True)
+    except ssl.SSLCertVerificationError as exc:
+        if require_valid_chain:
+            raise FlowError(
+                f"Certificate chain for {host}:{port} failed verification: "
+                f"{getattr(exc, 'verify_message', '') or exc}")
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        _, der = handshake(ctx)
+        if not der:
+            raise FlowError(f"No certificate received from {host}:{port}")
+        import subprocess
+        pem = ssl.DER_cert_to_PEM_cert(der)
+        proc = subprocess.run(
+            ["openssl", "x509", "-noout", "-enddate"],
+            input=pem, capture_output=True, text=True, timeout=15)
+        if proc.returncode != 0 or "notAfter=" not in proc.stdout:
+            raise FlowError("openssl could not parse the certificate "
+                            "(needed for non-system-CA chains)", UNKNOWN)
+        not_after = proc.stdout.split("notAfter=", 1)[1].strip()
+        expires = ssl.cert_time_to_seconds(not_after)
+        return ((expires - time.time()) / 86400.0, not_after, False)
+
+
+def _run_cert_flow(flow: dict[str, Any], path: Path) -> FlowResult:
+    service = flow.get("name", path.stem)
+    warn_days = int(flow.get("warn_days", 21))
+    crit_days = int(flow.get("crit_days", 7))
+    timeout_s = int(flow.get("timeout_ms", 15000)) / 1000.0
+    host, port = _cert_host(flow)
+    result = FlowResult(service=service)
+    start = time.monotonic()
+    try:
+        days, not_after, verified = _fetch_cert_expiry(
+            host, port, timeout_s, bool(flow.get("require_valid_chain")))
+    except FlowError as fe:
+        result.status = fe.status
+        result.summary = str(fe)
+        result.duration_ms = int((time.monotonic() - start) * 1000)
+        return result
+    except Exception as exc:
+        # Unreachable endpoint is a site failure, not a runner bug.
+        first = str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
+        result.status = CRIT
+        result.summary = f"TLS endpoint {host}:{port} unreachable: {first}"
+        result.duration_ms = int((time.monotonic() - start) * 1000)
+        return result
+    result.duration_ms = int((time.monotonic() - start) * 1000)
+    result.extra_metrics = [("cert_days_left", round(days, 1))]
+    note = "" if verified else " (chain not verified: internal/self-signed CA)"
+    result.summary = (f"Certificate for {host}:{port} expires in {days:.0f} "
+                      f"days ({not_after}){note}")
+    if days < crit_days:
+        result.status = CRIT
+        result.summary = (f"Certificate for {host}:{port} expires in {days:.1f} "
+                          f"days ({not_after}), below the {crit_days}-day "
+                          f"critical threshold{note}")
+    elif days < warn_days:
+        result.status = WARN
+        result.summary = (f"Certificate for {host}:{port} expires in {days:.1f} "
+                          f"days ({not_after}), below the {warn_days}-day "
+                          f"warning threshold{note}")
+    return result
+
+
 def run_flow(
     path: Path,
     headed: bool = False,
@@ -621,6 +775,10 @@ def run_flow(
 ) -> FlowResult:
     global _SECRETS
     flow = load_flow(path)
+    if str(flow.get("type", "flow")) == "cert":
+        # No browser, no secrets, no Playwright import: a cert check is one
+        # TLS handshake. Cheap enough to schedule densely.
+        return _run_cert_flow(flow, path)
     # Load the (permission-checked) secrets file up front so a misconfigured
     # secret store fails fast as UNKNOWN instead of mid-flow with blank creds.
     secrets_path = secret_source.secrets_file_path(secrets_file)
@@ -678,6 +836,33 @@ def run_flow(
             "shot_dir": str(path.parent.parent / "screenshots"),
             "flow_stem": path.stem,
         }
+        # trace_on_failure: record a Playwright trace (screenshots + DOM
+        # snapshots) and keep the .zip ONLY when the flow fails — the deep
+        # debugging artifact next to the failure PNG. Off by default: tracing
+        # costs memory and the zips are large.
+        tracing = bool(flow.get("trace_on_failure"))
+        if tracing:
+            try:
+                page.context.tracing.start(screenshots=True, snapshots=True)
+            except Exception:
+                tracing = False  # tracing must never break the check itself
+
+        def save_trace_if_failed() -> None:
+            if not tracing:
+                return
+            try:
+                if result.status == OK:
+                    page.context.tracing.stop()
+                else:
+                    shot_dir = path.parent.parent / "screenshots"
+                    shot_dir.mkdir(exist_ok=True)
+                    step = result.step_index if result.step_index is not None else "x"
+                    trace_path = shot_dir / f"{path.stem}-fail-step{step}.trace.zip"
+                    page.context.tracing.stop(path=str(trace_path))
+                    result.trace = str(trace_path)
+            except Exception:
+                pass  # artifact capture failures never change the verdict
+
         timings: list[tuple[str, int]] = []
         result.step_timings = timings
         if str(flow.get("type", "flow")) == "script":
@@ -686,6 +871,7 @@ def run_flow(
                 _execute_script_flow(flow, path, page, ctx, timings, result,
                                      shot_on_fail)
             finally:
+                save_trace_if_failed()
                 result.duration_ms = int((time.monotonic() - start) * 1000)
                 browser.close()
             if result.status == OK and not dynamic:
@@ -745,6 +931,7 @@ def run_flow(
                     label = re.sub(r"[^A-Za-z0-9_]", "_", f"step{i}_{step.get('action', 'unknown')}")
                     timings.append((label, int((time.monotonic() - step_start) * 1000)))
         finally:
+            save_trace_if_failed()
             result.duration_ms = int((time.monotonic() - start) * 1000)
             browser.close()
 
@@ -787,6 +974,10 @@ def run_with_retries(path: Path, **kwargs) -> FlowResult:
     result = run_flow(path, **kwargs)
     tried = 1
     while tried < attempts and result.status in (WARN, CRIT):
+        # Each attempt is a fresh run: clear the per-process redaction registry
+        # and builtin-variable cache so a retry gets new {{ var.uuid }} values
+        # and its failure message is not masked by a previous attempt's secret.
+        secret_source.reset()
         result = run_flow(path, **kwargs)
         tried += 1
     if tried > 1:

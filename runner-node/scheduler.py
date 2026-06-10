@@ -326,6 +326,14 @@ def main() -> int:
         f"concurrency={MAX_CONCURRENCY} tick={TICK}s run_timeout={RUN_TIMEOUT_S}s")
     SPOOL.mkdir(parents=True, exist_ok=True)
     SHOT_DIR.mkdir(parents=True, exist_ok=True)
+    # A previous hard kill (docker kill, OOM) can leave a half-written
+    # .<name>.tmp in the spool; publish() never lists them but sweep them on
+    # start so they cannot accumulate over a node's lifetime.
+    for stale in SPOOL.glob(".*.tmp"):
+        try:
+            stale.unlink()
+        except OSError:
+            pass
 
     pool = Pool(MAX_CONCURRENCY)
     flows = parse_conf(CONF)

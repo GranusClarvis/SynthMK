@@ -140,10 +140,19 @@ def audit(role: str, ip: str, action: str, target: str = "", ok: bool = True) ->
 
 
 def audit_tail(n: int = 100) -> list[dict]:
+    """Last n audit entries, reading only the file's tail (the log can grow
+    large; never load the whole thing into memory)."""
     if not AUDIT_FILE.is_file():
         return []
+    size = AUDIT_FILE.stat().st_size
+    read_back = min(size, max(n, 1) * 512)  # generous per-line estimate
+    with open(AUDIT_FILE, "rb") as fh:
+        if size > read_back:
+            fh.seek(size - read_back)
+            fh.readline()  # drop the partial first line
+        tail = fh.read().decode("utf-8", "replace").splitlines()
     entries = []
-    for line in AUDIT_FILE.read_text().splitlines()[-n:]:
+    for line in tail[-n:]:
         try:
             entries.append(json.loads(line))
         except json.JSONDecodeError:
@@ -453,6 +462,41 @@ class BuilderSession:
 
 BUILDER = BuilderSession()
 
+# The builder opens operator-supplied URLs in a real browser ON the node, so
+# it is an SSRF surface even though it is admin-only. By default it refuses
+# loopback, link-local and cloud-metadata endpoints (an admin should never be
+# able to screenshot the node's own IAM credentials by accident). Set
+# SYNTHMK_BUILDER_ALLOW_INTERNAL=1 to author against localhost services.
+_BUILDER_ALLOW_INTERNAL = os.environ.get("SYNTHMK_BUILDER_ALLOW_INTERNAL") == "1"
+_METADATA_HOSTS = {"169.254.169.254", "metadata.google.internal",
+                   "metadata", "100.100.100.200"}
+
+
+def builder_url_blocked(target: str) -> str:
+    """Return a reason string if the builder must refuse this URL, else ''."""
+    import ipaddress
+    from urllib.parse import urlparse
+    host = (urlparse(target).hostname or "").lower()
+    if not host:
+        return "could not parse a host from the URL"
+    if host in _METADATA_HOSTS:
+        return "cloud metadata endpoints are blocked"
+    if _BUILDER_ALLOW_INTERNAL:
+        return ""
+    try:
+        ip = ipaddress.ip_address(host)
+        if (ip.is_loopback or ip.is_link_local or ip.is_private
+                or ip.is_reserved or ip.is_unspecified):
+            return ("internal/loopback/link-local addresses are blocked "
+                    "(set SYNTHMK_BUILDER_ALLOW_INTERNAL=1 to allow)")
+    except ValueError:
+        # A hostname, not a literal IP. Block obvious loopback names; real DNS
+        # rebinding is out of scope (the builder is admin-only authoring).
+        if host in {"localhost", "ip6-localhost"} or host.endswith(".localhost"):
+            return ("localhost is blocked "
+                    "(set SYNTHMK_BUILDER_ALLOW_INTERNAL=1 to allow)")
+    return ""
+
 
 # --- HTTP ----------------------------------------------------------------------
 
@@ -618,6 +662,10 @@ class AdminHandler(BaseHTTPRequestHandler):
             target = str(self._body().get("url", "")).strip()
             if not target.startswith(("http://", "https://")):
                 return self._json(400, {"error": "url must start with http:// or https://"})
+            blocked = builder_url_blocked(target)
+            if blocked:
+                audit("admin", self._ip(), "builder_start_blocked", target, ok=False)
+                return self._json(400, {"error": blocked})
             audit("admin", self._ip(), "builder_start", target)
             return self._json(200, BUILDER.request({"cmd": "start", "url": target}, 90))
 
@@ -737,7 +785,11 @@ class AdminHandler(BaseHTTPRequestHandler):
         return self._json(404, {"error": "not found"})
 
     def log_message(self, fmt: str, *args) -> None:
-        sys.stderr.write("admin-server: %s\n" % (fmt % args))
+        # The login token rides in the /api/login?token=... query string (and
+        # may appear in a few API calls). Never write it to the container log.
+        line = fmt % args
+        line = re.sub(r"(token=)[^&\s\"]+", r"\1<redacted>", line)
+        sys.stderr.write("admin-server: %s\n" % line)
 
 
 LOGIN_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">

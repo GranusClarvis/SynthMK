@@ -227,6 +227,22 @@ def main() -> int:
                           token=ADMIN_TOK, csrf=True)
             check("import with no usable steps is 422", code == 422)
 
+            print("== v0.7.0: builder SSRF blocklist ==")
+            for bad, why in [("http://169.254.169.254/latest/meta-data/", "metadata"),
+                             ("http://127.0.0.1:9181/", "loopback ip"),
+                             ("http://localhost/admin", "localhost name"),
+                             ("http://10.0.0.5/", "private range"),
+                             ("https://[::1]/", "ipv6 loopback")]:
+                code, d = req(port, "/api/builder/start", "POST", {"url": bad},
+                              token=ADMIN_TOK, csrf=True)
+                check(f"builder blocks {why}", code == 400 and "block" in (d.get("error", "")))
+            # A public URL passes the guard (the worker then needs a browser,
+            # absent here, so we accept any non-400 as "passed the blocklist").
+            code, d = req(port, "/api/builder/start", "POST",
+                          {"url": "https://example.com/"}, token=ADMIN_TOK, csrf=True)
+            check("builder allows a public URL past the blocklist", code != 400)
+            req(port, "/api/builder/stop", "POST", {}, token=ADMIN_TOK, csrf=True)
+
             print("== v0.6.0: security headers + login throttle ==")
             r = urllib.request.Request(f"http://127.0.0.1:{port}/login")
             with urllib.request.urlopen(r, timeout=10) as resp:

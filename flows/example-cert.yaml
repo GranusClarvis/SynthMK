@@ -1,0 +1,11 @@
+# Certificate-expiry check (type: cert): no browser, one TLS handshake.
+# Reports the days left as the cert_days_left metric and alarms as the
+# remaining days cross the thresholds. Works against internal/self-signed
+# CAs too (the summary notes when the chain could not be verified); set
+# require_valid_chain: true to also fail when the chain does not verify.
+name: Synthetic TLS Certificate (example.com)
+type: cert
+host: example.com
+port: 443
+warn_days: 21
+crit_days: 7

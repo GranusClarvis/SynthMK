@@ -76,7 +76,12 @@ class ShotHandler(BaseHTTPRequestHandler):
         # basename-only: any path shape ("/../x", "//x", nested) collapses to
         # one filename looked up flat in SHOT_DIR — no traversal surface.
         name = os.path.basename(url.path)
-        if not name or not name.endswith(".png"):
+        # Two artifact kinds only: failure PNGs and Playwright trace zips.
+        if name.endswith(".png"):
+            ctype = "image/png"
+        elif name.endswith(".trace.zip"):
+            ctype = "application/zip"
+        else:
             return self._deny(404, "not found")
         target = SHOT_DIR / name
         if not target.is_file():
@@ -87,7 +92,7 @@ class ShotHandler(BaseHTTPRequestHandler):
                 return self._deny(403, "invalid or missing token")
         data = target.read_bytes()
         self.send_response(200)
-        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "private, no-store")
         self.end_headers()

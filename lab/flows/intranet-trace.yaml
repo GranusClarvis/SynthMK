@@ -1,0 +1,16 @@
+# Trace-on-failure demo: this flow deliberately asserts text that is not on
+# the page, so it fails and the runner keeps a Playwright trace.zip next to
+# the failure screenshot (open it at trace.playwright.dev). Scheduled at a
+# long interval since it is a permanent CRIT used to demonstrate artifacts.
+name: Synthetic Trace Demo (intentional fail)
+checkmk_host: intranet-demo
+timeout_ms: 15000
+warn_ms: 5000
+crit_ms: 12000
+screenshot_on_failure: true
+trace_on_failure: true
+steps:
+  - action: open_url
+    url: http://intranet-demo/index.html
+  - action: check_visible_text
+    text: This text does not exist on the page

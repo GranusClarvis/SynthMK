@@ -1,0 +1,8 @@
+# Live cert check in the lab: monitor a public endpoint's TLS certificate.
+# (The lab Checkmk site speaks plain HTTP, so we point at a public host to
+# prove the cert path end to end; in production aim it at your own services.)
+name: Synthetic TLS Certificate (wikipedia.org)
+type: cert
+host: en.wikipedia.org
+warn_days: 21
+crit_days: 7

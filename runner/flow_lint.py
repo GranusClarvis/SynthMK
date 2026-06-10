@@ -97,6 +97,15 @@ TOP_LEVEL_KNOWN = {
     "script",         # script flows: path to the .py, relative to the flow file
     # v0.6.0 additions:
     "max_attempts",   # 1..3; CRIT/WARN outcomes re-run with a fresh browser
+    # v0.7.0 additions:
+    "trace_on_failure",  # keep a Playwright trace.zip when the flow fails
+}
+
+# Keys a `type: cert` flow may carry (it has no steps and no browser).
+CERT_KEYS = {
+    "name", "type", "host", "url", "port", "warn_days", "crit_days",
+    "require_valid_chain", "timeout_ms", "checkmk_host", "max_attempts",
+    "start_url",
 }
 
 # Allowed values for the state_mode top-level field.
@@ -129,9 +138,28 @@ def lint_flow(data: Any, *, source: str = "<flow>",
     if "name" not in data:
         warnings.append(f"{source}: no top-level 'name' (service will fall back to file stem)")
 
+    is_cert = str(data.get("type", "flow")) == "cert"
     for key in data:
-        if key not in TOP_LEVEL_KNOWN:
+        if key not in (CERT_KEYS if is_cert else TOP_LEVEL_KNOWN):
             warnings.append(f"{source}: unknown top-level key '{key}'")
+
+    if is_cert:
+        if not (data.get("host") or data.get("url")):
+            errors.append(f"{source}: type: cert requires 'host' or 'url'")
+        port = data.get("port")
+        if port is not None and (not isinstance(port, int) or not 1 <= port <= 65535):
+            errors.append(f"{source}: port must be an integer 1..65535")
+        warn_d, crit_d = data.get("warn_days"), data.get("crit_days")
+        for label, val in (("warn_days", warn_d), ("crit_days", crit_d)):
+            if val is not None and (not isinstance(val, int) or val < 0):
+                errors.append(f"{source}: {label} must be a non-negative integer")
+        if isinstance(warn_d, int) and isinstance(crit_d, int) and crit_d > warn_d:
+            errors.append(
+                f"{source}: crit_days ({crit_d}) must be <= warn_days ({warn_d}) "
+                f"(fewer days left is worse)")
+        if "steps" in data:
+            warnings.append(f"{source}: 'steps' is ignored on a type: cert flow")
+        return (errors, warnings)
 
     warn_ms, crit_ms = data.get("warn_ms"), data.get("crit_ms")
     if isinstance(warn_ms, int) and isinstance(crit_ms, int) and warn_ms > crit_ms:
@@ -170,7 +198,7 @@ def lint_flow(data: Any, *, source: str = "<flow>",
 
     ftype = str(data.get("type", "flow"))
     if ftype not in ("flow", "script"):
-        errors.append(f"{source}: type '{ftype}' must be 'flow' or 'script'")
+        errors.append(f"{source}: type '{ftype}' must be 'flow', 'script' or 'cert'")
         return (errors, warnings)
     if ftype == "script":
         ref = data.get("script")

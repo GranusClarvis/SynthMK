@@ -99,7 +99,8 @@ def main() -> int:
                    SYNTHMK_ADMIN_BIND="127.0.0.1",
                    SYNTHMK_ADMIN_TOKEN=ADMIN_TOK,
                    SYNTHMK_AUDIT_LOG=str(tdp / "audit.log"),
-                   SYNTHMK_ADMIN_TOKEN_FILE=str(tdp / "token"))
+                   SYNTHMK_ADMIN_TOKEN_FILE=str(tdp / "token"),
+                   SYNTHMK_BUILDER_ALLOW_INTERNAL="1")
         server = subprocess.Popen([sys.executable, str(HERE / "admin_server.py")],
                                   env=env, stdout=subprocess.DEVNULL,
                                   stderr=subprocess.DEVNULL)
