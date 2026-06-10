@@ -26,6 +26,32 @@ RUN apt-get update \
  # chromium build 1148 == Playwright 1.49.x.
  && pip install --no-cache-dir pyyaml "playwright==1.49.0"
 
+# Optional: BAKE the official, version-matched Checkmk agent (which ships
+# cmk-agent-ctl, the TLS controller) into the image so production nodes carry
+# the encrypted transport with zero runtime download. Point CMK_AGENT_DEB at the
+# agent .deb YOUR site publishes — http://<site-host>:5000/<site>/check_mk/agents/
+# — so the baked version matches the server:
+#
+#   docker build -f runner-node/Dockerfile \
+#     --build-arg CMK_AGENT_DEB=http://cmk.example.lan:5000/mysite/check_mk/agents/check-mk-agent_2.3.0p7-1_all.deb \
+#     -t synthmk-runner:$(cat VERSION) .
+#
+# Left empty (the default) the image ships only socat (lab transport); operators
+# can still upgrade a running container to TLS at any time via register_agent.sh.
+# Either way the TLS *registration* (per-site certs) is a runtime step — an image
+# cannot carry a site-bound registration — but baking the binaries here removes
+# the download half and lets SYNTHMK_AGENT_MODE=official start immediately.
+ARG CMK_AGENT_DEB=
+RUN if [ -n "$CMK_AGENT_DEB" ]; then \
+      echo "Baking official Checkmk agent from $CMK_AGENT_DEB" \
+   && curl -fsSL -o /tmp/check-mk-agent.deb "$CMK_AGENT_DEB" \
+   && apt-get update \
+   && (dpkg -i /tmp/check-mk-agent.deb || apt-get install -fy --no-install-recommends) \
+   && rm -rf /tmp/check-mk-agent.deb /var/lib/apt/lists/* \
+   && command -v cmk-agent-ctl >/dev/null \
+   && echo "baked cmk-agent-ctl: $(cmk-agent-ctl --version 2>/dev/null | head -n1)"; \
+    fi
+
 WORKDIR ${SYNTHMK_HOME}
 # Payload the node runs (runner + flows + checkmk wrapper + node scripts + version).
 COPY runner/      ${SYNTHMK_HOME}/runner/

@@ -23,7 +23,7 @@ able to reach), and exposes the results to Checkmk like any monitored host.
 | Screenshot server | `shot_server.py` | Serves failure PNGs on `9180` with **per-file HMAC token URLs** (node-local key, auto-created 0600). No directory listing, no traversal, `/healthz` for container healthchecks. `SYNTHMK_SHOT_AUTH=off` only if you really want the old open behavior. |
 | Schedule | `flows.conf` | `flow_file interval_s [checkmk_host]` per line — the scaling surface. Hot-reloaded on change. |
 | Secrets | mounted file → `$SYNTHMK_SECRETS_FILE` | YAML mapping for `{{ secret.* }}` refs; chmod 600 on the host; the entrypoint stages a runner-owned copy so bind-mount ownership doesn't matter. Values are redacted from all output. |
-| TLS upgrade | `register_agent.sh` | One command: downloads YOUR site's version-matched agent, installs it, registers `cmk-agent-ctl` (TLS). Then run with `SYNTHMK_AGENT_MODE=official`. |
+| TLS upgrade | `register_agent.sh` + `CMK_AGENT_DEB` build-arg | Two ways to land the official agent + `cmk-agent-ctl` (TLS): **bake** it into the image at build time (`--build-arg CMK_AGENT_DEB=<site .deb url>`) for zero-download production nodes, or **install at runtime** with `register_agent.sh`. Either way the per-site TLS *registration* is a one-time runtime step; then run with `SYNTHMK_AGENT_MODE=official`. |
 
 Privilege model: the container may start as root (volume chown + official agent
 daemon), but the **scheduler, browsers, and HTTP servers all run as the
@@ -68,7 +68,19 @@ becomes a service, plus the `SynthMK Scheduler` health service. A flow with a
 The socat transport is plaintext and unauthenticated — fine on a trusted lab
 segment with `6556` firewalled to the Checkmk server, not fine beyond that.
 Upgrade to the official, version-matched Checkmk agent + TLS controller
-(verified against Checkmk Raw 2.3):
+(verified against Checkmk Raw 2.3).
+
+**Bake it into the image (production default).** Pass your site's agent `.deb`
+URL at build time so `cmk-agent-ctl` ships in the image — no runtime download:
+
+```bash
+docker build -f runner-node/Dockerfile \
+  --build-arg CMK_AGENT_DEB=http://cmk.example.lan:5000/mysite/check_mk/agents/check-mk-agent_2.3.0p7-1_all.deb \
+  -t synthmk-runner:$(cat VERSION) .
+```
+
+Then register once (binds the per-site TLS cert — an image can't carry that) and
+restart in `official` mode:
 
 ```bash
 # 1. one-time registration (host must already exist in Checkmk):

@@ -4,6 +4,19 @@ All notable changes to SynthMK are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); SynthMK uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Bake the official Checkmk agent into the image** (`runner-node/Dockerfile`):
+  optional `--build-arg CMK_AGENT_DEB=<site agent .deb url>` installs the
+  version-matched official agent + `cmk-agent-ctl` (TLS controller) at build
+  time, so production runner nodes carry the encrypted transport with zero
+  runtime download. Default empty → lab socat path unchanged; `register_agent.sh`
+  remains the runtime install/registration alternative. The per-site TLS
+  *registration* stays a one-time runtime step (an image can't bind a site cert).
+  Entrypoint's `official`-mode error and `runner-node/README.md` now document
+  both routes. `docker build --check` clean.
+
 ## [0.4.0] — native Checkmk plugin, node dashboard, multi-browser recorder, website
 
 The "real product" release: SynthMK is now a genuine Checkmk plugin with

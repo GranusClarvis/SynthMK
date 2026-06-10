@@ -74,7 +74,10 @@ if [[ "$AGENT_MODE" == "official" ]]; then
   # spool dir natively, so scheduler output flows through unchanged.
   if ! command -v cmk-agent-ctl >/dev/null 2>&1; then
     echo "FATAL: SYNTHMK_AGENT_MODE=official but cmk-agent-ctl is not installed."
-    echo "       Run runner-node/register_agent.sh first (see runner-node/README.md)."
+    echo "       Either bake the agent into the image at build time"
+    echo "         (docker build --build-arg CMK_AGENT_DEB=<site agent .deb url>)"
+    echo "       or install + register it at runtime:"
+    echo "         runner-node/register_agent.sh  (see runner-node/README.md)."
     exit 1
   fi
   # Containers have no systemd socket activation — provide the agent socket
