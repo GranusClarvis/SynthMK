@@ -34,11 +34,14 @@ ci:
 #  1. runner output contract (Checkmk line shape, escalation, assertions, env subst)
 #  2. static flow lint (every flows/*.yaml is schema-valid for the runner)
 #  3. recorder-exported YAML is consumable by the runner's own load_flow contract
-validate: validate-contract lint-flows validate-export
+validate: validate-contract validate-import lint-flows validate-export
 	@echo "VALIDATE OK"
 
 validate-contract:
 	$(PYTHON) runner/test_contract.py
+
+validate-import:
+	$(PYTHON) runner/test_import_devtools.py
 
 lint-flows:
 	$(PYTHON) runner/flow_lint.py $(FLOWS)
