@@ -49,6 +49,8 @@ REQUIRED_KEYS: dict[str, tuple[str, ...]] = {
     "hover": ("selector",),
     "scroll_into_view": ("selector",),
     "wait_ms": ("ms",),
+    "wait_for_network_idle": (),  # no required keys; timeout_ms optional
+    "screenshot": (),             # always-on capture; name/full_page optional
     "wait_for_element": ("selector",),
     "wait_for_url": ("contains",),
     "check_visible_text": ("text",),
@@ -68,6 +70,7 @@ ACTION_OPTIONAL_KEYS: dict[str, set[str]] = {
     "press": {"selector"},
     "select_option": {"value"},
     "check_element_count": {"min"},
+    "screenshot": {"name", "full_page"},
 }
 
 TOP_LEVEL_KNOWN = {
@@ -80,6 +83,14 @@ TOP_LEVEL_KNOWN = {
 
 # Allowed values for the state_mode top-level field.
 STATE_MODES = {"digit", "dynamic"}
+
+# Recognized `browser:` engines (mirrors runner._BROWSER_ENGINES). An unknown
+# value is a warning, not an error: the runner falls back to chromium so the
+# flow still runs, but the operator probably meant one of these.
+KNOWN_BROWSERS = {
+    "chromium", "chrome", "google-chrome", "edge", "msedge",
+    "firefox", "ff", "webkit", "safari",
+}
 
 
 def lint_flow(data: Any, *, source: str = "<flow>") -> tuple[list[str], list[str]]:
@@ -101,6 +112,13 @@ def lint_flow(data: Any, *, source: str = "<flow>") -> tuple[list[str], list[str
     if isinstance(warn_ms, int) and isinstance(crit_ms, int) and warn_ms > crit_ms:
         errors.append(
             f"{source}: warn_ms ({warn_ms}) must be <= crit_ms ({crit_ms})"
+        )
+
+    browser = data.get("browser")
+    if browser is not None and str(browser).strip().lower() not in KNOWN_BROWSERS:
+        warnings.append(
+            f"{source}: browser '{browser}' is not a known engine "
+            f"({sorted(KNOWN_BROWSERS)}); runner will fall back to chromium"
         )
 
     state_mode = data.get("state_mode")

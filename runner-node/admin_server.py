@@ -30,6 +30,7 @@ import json
 import os
 import re
 import secrets as pysecrets
+import socket
 import subprocess
 import sys
 import time
@@ -68,6 +69,12 @@ def load_token() -> str:
 
 
 TOKEN = load_token()
+
+# Optional read-only token for the multi-node special agent's pull endpoint
+# (/api/results). The Checkmk server only needs to *read* results, so hand it
+# this scoped token instead of the full admin token. When unset, the admin
+# token still works (so /api/results is reachable out of the box).
+RESULTS_TOKEN = os.environ.get("SYNTHMK_RESULTS_TOKEN", "").strip()
 
 
 # --- node state assembly ------------------------------------------------------
@@ -140,6 +147,31 @@ def node_state() -> dict:
     }
 
 
+def results_payload() -> dict:
+    """Read-only result feed for the multi-node special agent (/api/results).
+
+    Each result carries its native <<<synthmk>>> entry (exactly what the
+    bundled check plugin parses) plus the piggyback host the flow targets, so
+    the special agent on the Checkmk server can re-emit it under the right host
+    without re-deriving anything. The scheduler self-service is included too.
+    """
+    conf = parse_conf()
+    host_by_flow = {slug(e["file"]): e.get("checkmk_host", "") for e in conf}
+    spool = last_results()
+    results = []
+    for flow_id, entry in spool.items():
+        results.append({
+            "piggyback_host": host_by_flow.get(flow_id, ""),
+            "entry": entry,
+        })
+    return {
+        "version": VERSION,
+        "node": socket.gethostname(),
+        "count": len(results),
+        "results": results,
+    }
+
+
 def lint_flow_text(text: str) -> tuple[bool, str]:
     """Validate candidate YAML with the repo linter before any write."""
     import tempfile
@@ -197,6 +229,15 @@ class AdminHandler(BaseHTTPRequestHandler):
     def _authed(self) -> bool:
         return hmac.compare_digest(self._client_token(), TOKEN)
 
+    def _results_authed(self) -> bool:
+        # /api/results accepts the scoped read-only token or the admin token.
+        tok = self._client_token()
+        if not tok:
+            tok = (parse_qs(urlparse(self.path).query).get("token") or [""])[0]
+        if RESULTS_TOKEN and hmac.compare_digest(tok, RESULTS_TOKEN):
+            return True
+        return hmac.compare_digest(tok, TOKEN)
+
     def _csrf_ok(self) -> bool:
         # State-changing requests must repeat the token in a custom header —
         # a cross-site form can carry the cookie but not this header.
@@ -224,6 +265,11 @@ class AdminHandler(BaseHTTPRequestHandler):
                                   "; HttpOnly; SameSite=Strict; Path=/",
                 })
             return self._json(403, {"ok": False, "error": "bad token"})
+        if url.path == "/api/results":
+            # Read-only feed for the multi-node special agent (separate token).
+            if not self._results_authed():
+                return self._json(401, {"error": "auth required"})
+            return self._json(200, results_payload())
         if not self._authed():
             if url.path == "/":
                 return self._send(302, b"", "text/plain", {"Location": "/login"})

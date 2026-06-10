@@ -196,6 +196,32 @@ def load_flow(path: Path) -> dict[str, Any]:
     return data
 
 
+# Flow `browser:` value -> (Playwright engine attribute, optional channel).
+# Firefox and WebKit are first-class Playwright engines (already bundled).
+# `chrome`/`chromium` map to the BUNDLED chromium (no channel) — that is what
+# the appliance ships and what `browser: chrome` flows have always run on, so
+# they must not suddenly require an OS-installed Chrome. Only `edge` opts into a
+# release channel (the OS Edge), and even that falls back if the channel binary
+# is absent. An unrecognized value falls back to bundled chromium.
+_BROWSER_ENGINES: dict[str, tuple[str, str | None]] = {
+    "chromium": ("chromium", None),
+    "chrome": ("chromium", None),
+    "google-chrome": ("chromium", None),
+    "edge": ("chromium", "msedge"),
+    "msedge": ("chromium", "msedge"),
+    "firefox": ("firefox", None),
+    "ff": ("firefox", None),
+    "webkit": ("webkit", None),
+    "safari": ("webkit", None),
+}
+
+
+def _browser_engine(value: Any) -> tuple[str, str | None]:
+    """Resolve a flow's `browser:` field to a (engine, channel) launch target."""
+    key = str(value or "chromium").strip().lower()
+    return _BROWSER_ENGINES.get(key, ("chromium", None))
+
+
 def _run_step(page, step: dict[str, Any], default_timeout: int, ctx: dict[str, Any]) -> None:
     action = step.get("action")
     timeout = int(step.get("timeout_ms", default_timeout))
@@ -235,6 +261,35 @@ def _run_step(page, step: dict[str, Any], default_timeout: int, ctx: dict[str, A
         page.locator(step["selector"]).first.scroll_into_view_if_needed(timeout=timeout)
     elif action == "wait_ms":
         page.wait_for_timeout(int(step["ms"]))
+    elif action == "wait_for_network_idle":
+        # Wait until there have been no network connections for 500ms (Playwright's
+        # "networkidle"). Useful after a click that kicks off XHR/fetch before the
+        # next assertion. Guarded by timeout so a chatty page can't hang the run.
+        try:
+            page.wait_for_load_state("networkidle", timeout=timeout)
+        except Exception:
+            raise FlowError(f"Network did not go idle within {timeout}ms")
+    elif action == "screenshot":
+        # Screenshot-always: capture evidence at this point regardless of
+        # pass/fail. Masks form inputs first if a sensitive fill has happened,
+        # so an always-on capture can never leak a credential.
+        shot_dir = ctx.get("shot_dir")
+        if shot_dir is not None:
+            seq = ctx.get("shot_seq", 0)
+            ctx["shot_seq"] = seq + 1
+            label = re.sub(r"[^A-Za-z0-9_-]", "_", str(step.get("name", f"step{seq}")))
+            shot = Path(shot_dir) / f"{ctx.get('flow_stem', 'flow')}-{label}.png"
+            try:
+                Path(shot_dir).mkdir(parents=True, exist_ok=True)
+                if ctx.get("sensitive_used"):
+                    page.evaluate(_MASK_INPUTS_JS)
+                page.screenshot(path=str(shot), full_page=bool(step.get("full_page", False)))
+                ctx.setdefault("screenshots", []).append(str(shot))
+            except Exception as exc:
+                # An always-on screenshot is evidence, not an assertion: a capture
+                # failure must not flip an otherwise-passing flow to CRIT.
+                if not step.get("optional", True):
+                    raise FlowError(f"Screenshot capture failed: {exc}")
     elif action == "wait_for_element":
         try:
             page.wait_for_selector(step["selector"], timeout=timeout, state="visible")
@@ -328,11 +383,32 @@ def run_flow(
     if os.environ.get("SYNTHMK_NO_SANDBOX"):
         launch_args["args"] = ["--no-sandbox", "--disable-dev-shm-usage"]
 
+    engine, channel = _browser_engine(flow.get("browser"))
+    # A channel (Chrome/Edge stable) only applies to the chromium engine; the
+    # --no-sandbox args are Chromium-only too — Firefox/WebKit reject them.
+    if engine != "chromium":
+        launch_args.pop("args", None)
+    elif channel:
+        launch_args["channel"] = channel
+
     start = time.monotonic()
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=not headed, **launch_args)
+        try:
+            browser = getattr(p, engine).launch(headless=not headed, **launch_args)
+        except Exception:
+            # A requested release channel (e.g. Edge) may not be installed on
+            # this node — degrade to the bundled chromium rather than failing
+            # the whole check, so multi-browser flows stay portable.
+            if launch_args.pop("channel", None) is not None:
+                browser = getattr(p, engine).launch(headless=not headed, **launch_args)
+            else:
+                raise
         page = browser.new_page()
-        ctx: dict[str, Any] = {"sensitive_used": False}
+        ctx: dict[str, Any] = {
+            "sensitive_used": False,
+            "shot_dir": str(path.parent.parent / "screenshots"),
+            "flow_stem": path.stem,
+        }
         timings: list[tuple[str, int]] = []
         result.step_timings = timings
         try:

@@ -14,7 +14,7 @@ Playwright code.
 | `timeout_ms` | int | no (30000) | Default per-step timeout. |
 | `warn_ms` | int | no | Total-duration WARN threshold → Checkmk perfdata `;warn`. |
 | `crit_ms` | int | no | Total-duration CRIT threshold → Checkmk perfdata `;crit`. |
-| `browser` | string | no (`chrome`) | Target browser; MVP runs Chromium. |
+| `browser` | string | no (`chrome`) | Target engine: `chromium`/`chrome`/`google-chrome` (bundled Chromium), `firefox`, `webkit`/`safari`, or `edge`/`msedge` (Edge release channel, falls back to bundled Chromium if absent). Unknown values fall back to Chromium. |
 | `screenshot_on_failure` | bool | no (false) | On a failing step, capture `screenshots/<flow>-fail-step<N>.png` and cite it in the output line (a clickable link when a screenshot base URL is configured — see below). |
 | `state_mode` | string | no (`digit`) | `digit` = runner computes the state (authoritative failure message); `dynamic` = emit a `P` state on success and let Checkmk threshold `duration` from `warn_ms`/`crit_ms`. |
 | `checkmk_host` | string | no | Piggyback target: attribute the result to this Checkmk host (the monitored site appears as its own host) instead of the runner node. Consumed by the runner-node scheduler / `checkmk/piggyback_wrap.sh`, not `runner.py`. |
@@ -34,6 +34,8 @@ Interaction steps:
 | `hover` | `selector` | Mouse-over (opens hover menus). |
 | `scroll_into_view` | `selector` | Scroll the element into the viewport. |
 | `wait_ms` | `ms` | Fixed wait. Prefer `wait_for_element`/`wait_for_url`. |
+| `wait_for_network_idle` | `timeout_ms?` | Wait until there are no network connections for 500ms (Playwright `networkidle`); clear failure if the page stays chatty past the timeout. Use after a click that fires XHR/fetch before the next assertion. |
+| `screenshot` | `name?`, `full_page?` | Always-on capture to `screenshots/<flow>-<name>.png` regardless of pass/fail (evidence / visual-diff baseline). Form inputs are masked first if a `sensitive` fill has run, so it can never leak a credential. A capture failure never flips a passing flow (treated as `optional`). |
 | `wait_for_element` | `selector`, `timeout_ms?` | Wait until selector is visible; clear failure if not. |
 | `wait_for_url` | `contains`, `timeout_ms?` | Wait until the URL contains a substring (post-login redirects). |
 

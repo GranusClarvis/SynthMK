@@ -7,6 +7,22 @@ All notable changes to SynthMK are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **Multi-browser engine + expanded step vocabulary** (`runner/runner.py`,
+  `runner/flow_lint.py`): the flow `browser:` field now selects the engine —
+  `firefox`, `webkit`/`safari`, `edge`/`msedge` (Edge release channel, degrades
+  to bundled Chromium if absent), in addition to `chromium`/`chrome` (bundled).
+  Unknown values fall back to Chromium. Two new steps: `wait_for_network_idle`
+  (Playwright `networkidle`, timeout-guarded) and `screenshot` (always-on,
+  credential-masked evidence capture). Linter and runner dispatch stay in
+  lockstep; `browser:` values are lint-validated. Example: `flows/example-firefox.yaml`.
+  `runner/test_contract.py` 55→69 checks (engine resolution, both new steps,
+  no-regression on `browser: chrome` → bundled chromium).
+- **Local-check first-run warmup** (`checkmk/synthmk_check.sh`): the empty-output
+  fallback no longer hard-codes a `SynthMK <file>` UNKNOWN name (which Checkmk
+  discovery would lock in). It now resolves the flow's real `name:` and emits
+  `OK - warming up` on the first ever empty run, `UNKNOWN` only after a real
+  result has been seen — so cold-start discovery captures the right service name
+  (matches the runner-node scheduler's existing `emit_warmup`).
 - **Bake the official Checkmk agent into the image** (`runner-node/Dockerfile`):
   optional `--build-arg CMK_AGENT_DEB=<site agent .deb url>` installs the
   version-matched official agent + `cmk-agent-ctl` (TLS controller) at build

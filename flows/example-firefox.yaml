@@ -1,0 +1,33 @@
+# Multi-browser example: the same demo sign-in flow run on Firefox instead of
+# Chromium, exercising the v0.4.0 step additions (wait_for_network_idle and an
+# always-on screenshot). Playwright already bundles a Firefox engine — set the
+# top-level `browser:` field and the runner launches it; no other change needed.
+name: Synthetic Example Check (Firefox)
+start_url: "{{ SYNTHMK_DEMO_URL }}"
+browser: firefox
+timeout_ms: 30000
+warn_ms: 4000
+crit_ms: 9000
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: "{{ SYNTHMK_DEMO_URL }}"
+  - action: check_title
+    contains: SynthMK Demo
+  - action: fill
+    selector: "#username"
+    value: "{{ DEMO_USER }}"
+  - action: fill
+    selector: "#password"
+    value: "{{ DEMO_PASS }}"
+    sensitive: true
+  - action: click
+    selector: "#submit"
+  - action: wait_for_network_idle
+    timeout_ms: 5000
+  - action: wait_for_element
+    selector: "[data-testid='dashboard']"
+  - action: screenshot
+    name: dashboard
+  - action: check_visible_text
+    text: Account Overview

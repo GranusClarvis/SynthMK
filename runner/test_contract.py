@@ -205,6 +205,58 @@ def main() -> int:
     check("lint actions cover runner ASSERT_ACTIONS",
           R.ASSERT_ACTIONS.issubset(set(L.REQUIRED_KEYS)))
 
+    print("== v0.4.0: multi-browser engine resolution ==")
+    check("chromium default", R._browser_engine(None) == ("chromium", None))
+    # `chrome` maps to BUNDLED chromium (no channel) so appliance flows that say
+    # `browser: chrome` never demand an OS-installed Chrome stable binary.
+    check("chrome -> bundled chromium (no channel)", R._browser_engine("chrome") == ("chromium", None))
+    check("edge -> chromium msedge channel", R._browser_engine("Edge") == ("chromium", "msedge"))
+    check("firefox -> firefox engine", R._browser_engine("firefox") == ("firefox", None))
+    check("webkit -> webkit engine", R._browser_engine("safari") == ("webkit", None))
+    check("unknown browser falls back to chromium", R._browser_engine("lynx") == ("chromium", None))
+    check("known browsers lint set matches runner engines",
+          set(L.KNOWN_BROWSERS) == set(R._BROWSER_ENGINES))
+
+    print("== v0.4.0: wait_for_network_idle + screenshot steps ==")
+    # wait_for_network_idle on a page that exposes wait_for_load_state passes;
+    # on a page that raises, it surfaces a clear FlowError (not a runner crash).
+    class IdlePage(FakePage):
+        def wait_for_load_state(self, state, timeout=None):
+            assert state == "networkidle"
+    try:
+        R._run_step(IdlePage(), {"action": "wait_for_network_idle"}, 50, {})
+        check("network idle passes when page settles", True)
+    except R.FlowError:
+        check("network idle passes when page settles", False)
+
+    class BusyPage(FakePage):
+        def wait_for_load_state(self, state, timeout=None):
+            raise RuntimeError("timeout")
+    try:
+        R._run_step(BusyPage(), {"action": "wait_for_network_idle"}, 50, {})
+        check("network never idle raises FlowError", False)
+    except R.FlowError as fe:
+        check("network never idle raises FlowError", "did not go idle" in str(fe))
+
+    # screenshot step writes a PNG under ctx['shot_dir'] and records its path.
+    import tempfile as _tf
+    class ShotPage(FakePage):
+        def screenshot(self, path=None, full_page=False):
+            Path(path).write_bytes(b"PNG")
+    with _tf.TemporaryDirectory() as _sd:
+        sctx = {"shot_dir": _sd, "flow_stem": "demo"}
+        R._run_step(ShotPage(), {"action": "screenshot", "name": "after-login"}, 50, sctx)
+        shots = sctx.get("screenshots", [])
+        check("screenshot step records a capture path", len(shots) == 1)
+        check("screenshot file written to shot_dir", shots and Path(shots[0]).is_file()
+              and "demo-after-login.png" in shots[0])
+    # screenshot with no shot_dir is a safe no-op (never raises).
+    try:
+        R._run_step(ShotPage(), {"action": "screenshot"}, 50, {})
+        check("screenshot without shot_dir is a no-op", True)
+    except Exception:  # noqa: BLE001
+        check("screenshot without shot_dir is a no-op", False)
+
     print("== v0.3.0: expanded step vocabulary ==")
     # Every action in the linter table must be dispatchable by the runner: an
     # unknown action raises FlowError(UNKNOWN), a known one fails differently
