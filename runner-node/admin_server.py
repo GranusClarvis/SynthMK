@@ -30,9 +30,11 @@ import json
 import os
 import re
 import secrets as pysecrets
+import select
 import socket
 import subprocess
 import sys
+import threading
 import time
 from http import cookies as http_cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -198,6 +200,95 @@ def update_conf(flow_file: str, interval: int | None, host: str) -> None:
     CONF.write_text("\n".join(kept) + "\n")
 
 
+# --- visual step builder session -----------------------------------------------
+
+class BuilderSession:
+    """Owns the builder_session.py worker (one live Playwright page).
+
+    One session per node — the builder is an authoring tool for the operator
+    at the dashboard, not a multi-user service. All access is serialized; an
+    idle session is reaped so a forgotten tab can't pin a headless browser.
+    """
+
+    IDLE_TIMEOUT_S = int(os.environ.get("SYNTHMK_BUILDER_IDLE_S", "600"))
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._proc: subprocess.Popen | None = None
+        self._last = 0.0
+
+    def _read_line(self, timeout_s: float) -> str | None:
+        assert self._proc is not None
+        ready, _, _ = select.select([self._proc.stdout], [], [], timeout_s)
+        return self._proc.stdout.readline() if ready else None
+
+    def _stop_locked(self) -> None:
+        if self._proc is not None:
+            try:
+                self._proc.kill()
+                self._proc.wait(timeout=5)
+            except Exception:
+                pass
+            self._proc = None
+
+    def _spawn_locked(self) -> None:
+        self._proc = subprocess.Popen(
+            [sys.executable, str(HOME / "runner-node" / "builder_session.py")],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        line = self._read_line(60)
+        if not line or not json.loads(line).get("ready"):
+            self._stop_locked()
+            raise RuntimeError("builder worker failed to start")
+
+    def request(self, payload: dict, timeout_s: float = 60) -> dict:
+        with self._lock:
+            now = time.time()
+            if self._proc is not None and (
+                    self._proc.poll() is not None
+                    or now - self._last > self.IDLE_TIMEOUT_S):
+                self._stop_locked()
+            if self._proc is None:
+                if payload.get("cmd") != "start":
+                    return {"ok": False,
+                            "error": "no active builder session — open a page first"}
+                try:
+                    self._spawn_locked()
+                except Exception as exc:
+                    return {"ok": False, "error": f"could not start builder: {exc}"}
+            self._last = now
+            try:
+                self._proc.stdin.write(json.dumps(payload) + "\n")
+                self._proc.stdin.flush()
+                line = self._read_line(timeout_s)
+            except Exception as exc:
+                self._stop_locked()
+                return {"ok": False, "error": f"builder session died: {exc}"}
+            if line is None:
+                self._stop_locked()
+                return {"ok": False, "error": "builder timed out — session was reset"}
+            try:
+                return json.loads(line)
+            except json.JSONDecodeError:
+                self._stop_locked()
+                return {"ok": False, "error": "builder protocol error — session was reset"}
+
+    def stop(self) -> dict:
+        with self._lock:
+            if self._proc is not None:
+                try:
+                    self._proc.stdin.write(json.dumps({"cmd": "quit"}) + "\n")
+                    self._proc.stdin.flush()
+                    self._proc.wait(timeout=5)
+                except Exception:
+                    pass
+                self._stop_locked()
+            return {"ok": True}
+
+
+BUILDER = BuilderSession()
+
+
 # --- HTTP ----------------------------------------------------------------------
 
 class AdminHandler(BaseHTTPRequestHandler):
@@ -288,12 +379,37 @@ class AdminHandler(BaseHTTPRequestHandler):
             if not path.is_file():
                 return self._json(404, {"error": "not found"})
             return self._json(200, {"file": name, "yaml": path.read_text()})
+        if url.path == "/api/builder/shot":
+            return self._json(200, BUILDER.request({"cmd": "shot"}))
         return self._json(404, {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
         url = urlparse(self.path)
         if not self._authed() or not self._csrf_ok():
             return self._json(401, {"error": "auth required (token + X-SynthMK-Token header)"})
+
+        if url.path == "/api/builder/start":
+            target = str(self._body().get("url", "")).strip()
+            if not target.startswith(("http://", "https://")):
+                return self._json(400, {"error": "url must start with http:// or https://"})
+            return self._json(200, BUILDER.request({"cmd": "start", "url": target}, 90))
+
+        if url.path == "/api/builder/pick":
+            body = self._body()
+            try:
+                x, y = int(body.get("x")), int(body.get("y"))
+            except (TypeError, ValueError):
+                return self._json(400, {"error": "x and y must be integers"})
+            return self._json(200, BUILDER.request({"cmd": "pick", "x": x, "y": y}, 30))
+
+        if url.path == "/api/builder/step":
+            step = self._body().get("step")
+            if not isinstance(step, dict) or not step.get("action"):
+                return self._json(400, {"error": "step must be an object with an action"})
+            return self._json(200, BUILDER.request({"cmd": "step", "step": step}, 60))
+
+        if url.path == "/api/builder/stop":
+            return self._json(200, BUILDER.stop())
 
         if url.path == "/api/run":
             body = self._body()
@@ -377,18 +493,85 @@ textarea{width:100%;height:300px;background:#020617;color:#cbd5e1;border:1px sol
 #msg{font-size:.82rem;white-space:pre-wrap;color:var(--dim)}
 .steps{color:var(--dim);font-size:.76rem}
 .primary{background:var(--teal);color:#0f172a;border-color:var(--teal);font-weight:600}
+#builder{display:none;margin-top:1.4rem;background:var(--card);border-radius:12px;padding:1.2rem}
+#builder h2{margin:0 0 .8rem;font-size:1rem;color:var(--teal)}
+.bwrap{display:flex;gap:1rem;align-items:flex-start;flex-wrap:wrap}
+.bshot{flex:1 1 540px;min-width:380px}
+.bshot img{width:100%;border:1px solid var(--line);border-radius:8px;cursor:crosshair;display:block}
+.bshot .burl{font-size:.74rem;color:var(--dim);margin-top:.3rem;word-break:break-all}
+.bpanel{flex:1 1 300px;min-width:280px;max-width:430px}
+.bcard{background:#0f172a;border:1px solid var(--line);border-radius:9px;padding:.8rem;margin-bottom:.8rem}
+.bcard h3{margin:0 0 .5rem;font-size:.82rem;color:var(--teal)}
+.bcard label{display:block;font-size:.78rem;color:var(--dim);margin:.45rem 0 .15rem}
+.bcard input[type=text],.bcard select{width:100%;box-sizing:border-box;background:#020617;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:.38rem .5rem;font-size:.8rem}
+.bcand{font:11px ui-monospace,monospace;display:flex;gap:.4rem;align-items:center;margin:.2rem 0;word-break:break-all}
+.bsteps{list-style:none;margin:.4rem 0 0;padding:0;font-size:.78rem}
+.bsteps li{display:flex;justify-content:space-between;gap:.5rem;border-bottom:1px solid var(--line);padding:.3rem .1rem;font-family:ui-monospace,monospace}
+.bsteps li:last-child{border-bottom:0}
+.bsteps .ok{color:var(--teal)}.bsteps .err{color:var(--red)}
+.bsteps button{padding:.05rem .4rem;font-size:.7rem}
+#bstatus{font-size:.8rem;color:var(--dim);white-space:pre-wrap}
+.bhint{font-size:.78rem;color:var(--dim)}
+.qa{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.4rem}
+.qa button{font-size:.72rem;padding:.25rem .5rem}
 </style></head><body>
 <div class="top">
   <h1><b>SynthMK</b> runner node</h1>
   <div>
     <span class="pill" id="sched">scheduler: …</span>
     <span class="pill" id="ver"></span>
+    <button onclick="toggleBuilder()" id="builderbtn">Step builder</button>
     <button onclick="newFlow()" class="primary" id="newbtn">+ New check</button>
   </div>
 </div>
 <table><thead><tr>
 <th>Check</th><th>State</th><th>Duration</th><th>Steps</th><th>Every</th><th>Host</th><th>Last run</th><th></th>
 </tr></thead><tbody id="rows"></tbody></table>
+
+<div id="builder">
+  <h2>Visual step builder</h2>
+  <div class="row">
+    <input id="burl" size="42" placeholder="https://portal.example/login" value="https://">
+    <button class="primary" onclick="bOpen()">Open page</button>
+    <button onclick="bReplay()" id="breplay">Replay steps</button>
+    <button onclick="bStop()">Stop session</button>
+    <span id="bstatus"></span>
+  </div>
+  <div class="bwrap">
+    <div class="bshot">
+      <img id="bshot" alt="page preview" onclick="bPick(event)" style="display:none">
+      <div class="burl" id="bpageurl"></div>
+    </div>
+    <div class="bpanel">
+      <div class="bcard" id="belem">
+        <h3>Element</h3>
+        <div class="bhint">Open a page, then click an element in the preview —
+        like Chrome inspect, but every click builds a monitored step.</div>
+      </div>
+      <div class="bcard">
+        <h3>Page checks</h3>
+        <div class="qa">
+          <button onclick="bQuick('check_title')">Assert title</button>
+          <button onclick="bQuick('check_url')">Assert URL</button>
+          <button onclick="bQuick('check_text')">Assert text…</button>
+          <button onclick="bQuick('press_enter')">Press Enter</button>
+          <button onclick="bQuick('wait_idle')">Wait network idle</button>
+          <button onclick="bQuick('screenshot')">Screenshot</button>
+        </div>
+      </div>
+      <div class="bcard">
+        <h3>Steps <span class="bhint" id="bcount"></span></h3>
+        <ol class="bsteps" id="bsteplist"></ol>
+        <div class="row" style="margin-bottom:0">
+          <input id="bname" size="22" placeholder="Flow name" value="My Recorded Journey">
+          <button class="primary" onclick="bExport()">Open in editor</button>
+        </div>
+        <div class="bhint">Removing a step does not undo it in the live page —
+        use Replay steps to re-run the list from the start URL.</div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div id="editor">
   <h2 id="etitle">Edit flow</h2>
@@ -457,6 +640,207 @@ async function saveFlow(){
   document.getElementById('msg').textContent=r.ok?('Saved ✓\\n'+(d.lint||'')):(d.error+'\\n'+(d.lint||''));
   if(r.ok)setTimeout(refresh,800);
 }
+// ---------- visual step builder ----------
+let bSteps=[];        // {step:{...}, label:string, tested:bool}
+let bStartUrl='';
+let bElem=null;       // last picked element info
+
+function toggleBuilder(){
+  const b=document.getElementById('builder');
+  b.style.display=b.style.display==='block'?'none':'block';
+  if(b.style.display==='block')window.scrollTo(0,b.offsetTop-10);
+}
+function bStatus(t,isErr){const s=document.getElementById('bstatus');
+  s.textContent=t;s.style.color=isErr?'var(--red)':'var(--dim)';}
+function bShowShot(d){
+  if(!d.png)return;
+  const img=document.getElementById('bshot');
+  img.src='data:image/png;base64,'+d.png;img.style.display='block';
+  document.getElementById('bpageurl').textContent=(d.title?d.title+' — ':'')+(d.url||'');
+}
+async function bApi(path,body){
+  const r=await fetch(path,{method:'POST',headers:hdrs(),body:JSON.stringify(body||{})});
+  return await r.json();
+}
+async function bOpen(){
+  const u=document.getElementById('burl').value.trim();
+  if(!u.startsWith('http')){bStatus('URL must start with http(s)://',true);return;}
+  bStatus('Opening page…');
+  const d=await bApi('/api/builder/start',{url:u});
+  if(d.ok===false){bStatus(d.error,true);return;}
+  bStartUrl=u;bShowShot(d);bStatus('Page open. Click an element to build a step.');
+  if(!bSteps.length){bSteps.push({step:{action:'open_url',url:u},label:'open_url '+u,tested:true});bRenderSteps();}
+}
+async function bStop(){
+  await bApi('/api/builder/stop',{});
+  document.getElementById('bshot').style.display='none';
+  bStatus('Session stopped.');
+}
+function bScaleCoords(ev){
+  const img=ev.target,r=img.getBoundingClientRect();
+  return {x:Math.round((ev.clientX-r.left)*(img.naturalWidth/r.width)),
+          y:Math.round((ev.clientY-r.top)*(img.naturalHeight/r.height))};
+}
+async function bPick(ev){
+  const pt=bScaleCoords(ev);
+  bStatus('Inspecting element…');
+  const d=await bApi('/api/builder/pick',pt);
+  if(d.ok===false){bStatus(d.error,true);return;}
+  bShowShot(d);bElem=d.element;bRenderElem();bStatus('');
+}
+function bDefaultAction(e){
+  if(e.isPassword||e.isInput)return 'fill';
+  if(e.isSelect)return 'select_option';
+  if(e.isCheckbox)return 'check_checkbox';
+  if(e.tag==='a'||e.tag==='button'||['button','submit'].includes(e.type))return 'click';
+  if(e.text)return 'check_visible_text';
+  return 'click';
+}
+const B_ACTIONS=['click','fill','select_option','hover','check_visible_text',
+  'check_text_absent','wait_for_element','check_element_count',
+  'check_element_attribute','check_checkbox','scroll_into_view'];
+function bRenderElem(){
+  const e=bElem,el=document.getElementById('belem');
+  const cands=e.candidates.map((c,i)=>
+    `<div class="bcand"><input type="checkbox" id="bc${i}" ${i<2?'checked':''}><label for="bc${i}" style="display:inline;margin:0">${bEsc(c)}</label></div>`).join('');
+  const opts=B_ACTIONS.map(a=>`<option ${a===bDefaultAction(e)?'selected':''}>${a}</option>`).join('');
+  el.innerHTML=`<h3>Element &lt;${e.tag}${e.type?' type='+e.type:''}&gt;</h3>`+
+    (e.text?`<div class="bhint">“${bEsc(e.text.slice(0,60))}”</div>`:'')+
+    `<label>Selector ladder (checked = used, in order)</label>${cands}`+
+    `<label>Action</label><select id="bact" onchange="bRenderFields()">${opts}</select>`+
+    `<div id="bfields"></div>`+
+    `<div class="row" style="margin-bottom:0"><button class="primary" onclick="bAddStep()">Add &amp; test step</button></div>`;
+  bRenderFields();
+}
+function bRenderFields(){
+  const e=bElem,a=document.getElementById('bact').value,f=document.getElementById('bfields');
+  let h='';
+  if(a==='fill'){
+    const v=e.isPassword?'{{ secret.password }}':(e.text||'');
+    h+=`<label>Value</label><input type="text" id="bval" value="${bEsc(v)}">`+
+       `<label><input type="checkbox" id="bsens" ${e.isPassword?'checked':''} style="width:auto"> sensitive (mask in screenshots, redact in output)</label>`+
+       (e.isPassword?'<div class="bhint">Password detected — the value stays a secret reference; put the real value in the node’s secrets file.</div>':'');
+  }else if(a==='select_option'){
+    const o=(e.options||[]).map(x=>`<option value="${bEsc(x.value)}">${bEsc(x.label||x.value)}</option>`).join('');
+    h+=`<label>Option</label>`+(o?`<select id="bval">${o}</select>`:`<input type="text" id="bval">`);
+  }else if(a==='check_visible_text'||a==='check_text_absent'){
+    h+=`<label>Text</label><input type="text" id="bval" value="${bEsc(e.text||'')}">`;
+  }else if(a==='check_element_count'){
+    h+=`<label>Minimum count</label><input type="text" id="bval" value="1">`;
+  }else if(a==='check_element_attribute'){
+    h+=`<label>Attribute</label><input type="text" id="battr" value="${e.href?'href':''}">`+
+       `<label>Contains (empty = just present)</label><input type="text" id="bval" value="${bEsc(e.href||'')}">`;
+  }else if(a==='check_checkbox'){
+    h+=`<label><input type="checkbox" id="bval" ${e.checked?'checked':''} style="width:auto"> expected checked</label>`;
+  }
+  f.innerHTML=h;
+}
+function bSelectedLadder(){
+  const sel=[];
+  bElem.candidates.forEach((c,i)=>{const cb=document.getElementById('bc'+i);if(cb&&cb.checked)sel.push(c);});
+  return sel.length?(sel.length===1?sel[0]:sel):bElem.candidates[0];
+}
+function bStepLabel(st){
+  let l=st.action;
+  if(st.selector)l+=' '+(Array.isArray(st.selector)?st.selector[0]:st.selector);
+  if(st.text)l+=' “'+st.text.slice(0,24)+'”';
+  if(st.url)l+=' '+st.url;if(st.key)l+=' '+st.key;
+  return l;
+}
+async function bAddStep(){
+  const a=document.getElementById('bact').value;
+  const st={action:a};
+  const needsSel=!['check_visible_text','check_text_absent'].includes(a);
+  if(needsSel)st.selector=bSelectedLadder();
+  const val=document.getElementById('bval');
+  if(a==='fill'){st.value=val.value;if(document.getElementById('bsens').checked)st.sensitive=true;}
+  else if(a==='select_option')st.value=val.value;
+  else if(a==='check_visible_text'||a==='check_text_absent')st.text=val.value;
+  else if(a==='check_element_count')st.min=parseInt(val.value,10)||1;
+  else if(a==='check_element_attribute'){st.attribute=document.getElementById('battr').value;
+    if(val.value)st.contains=val.value;}
+  else if(a==='check_checkbox')st.checked=val.checked;
+  await bRunAndRecord(st);
+}
+async function bQuick(kind){
+  let st=null;
+  if(kind==='check_title'){const t=prompt('Title must contain:',
+    (document.getElementById('bpageurl').textContent.split(' — ')[0]||'').trim());
+    if(t===null)return;st={action:'check_title',contains:t};}
+  else if(kind==='check_url'){const u=prompt('URL must contain:','/');
+    if(u===null)return;st={action:'check_url',contains:u};}
+  else if(kind==='check_text'){const t=prompt('Page must show text:','');
+    if(!t)return;st={action:'check_visible_text',text:t};}
+  else if(kind==='press_enter')st={action:'press',key:'Enter'};
+  else if(kind==='wait_idle')st={action:'wait_for_network_idle'};
+  else if(kind==='screenshot')st={action:'screenshot',name:'evidence'};
+  if(st)await bRunAndRecord(st);
+}
+async function bRunAndRecord(st){
+  bStatus('Testing step on the live page…');
+  const d=await bApi('/api/builder/step',{step:st});
+  bShowShot(d);
+  if(d.ok===false){bStatus('Step failed: '+d.error+' — not added.',true);return;}
+  bSteps.push({step:st,label:bStepLabel(st),tested:true});
+  bRenderSteps();bStatus('Step added ✓');
+  document.getElementById('belem').innerHTML='<h3>Element</h3><div class="bhint">Click the next element in the preview.</div>';
+}
+function bRenderSteps(){
+  const ol=document.getElementById('bsteplist');
+  ol.innerHTML=bSteps.map((s,i)=>
+    `<li><span class="${s.tested?'ok':''}">${i}. ${bEsc(s.label)}</span>`+
+    `<button onclick="bSteps.splice(${i},1);bRenderSteps()">✕</button></li>`).join('');
+  document.getElementById('bcount').textContent=bSteps.length?('('+bSteps.length+')'):'';
+}
+async function bReplay(){
+  if(!bSteps.length||bSteps[0].step.action!=='open_url'){bStatus('Nothing to replay.',true);return;}
+  bStatus('Replaying…');
+  let d=await bApi('/api/builder/start',{url:bSteps[0].step.url});
+  if(d.ok===false){bStatus(d.error,true);return;}
+  for(let i=1;i<bSteps.length;i++){
+    d=await bApi('/api/builder/step',{step:bSteps[i].step});
+    if(d.ok===false){bShowShot(d);bStatus('Replay failed at step '+i+': '+d.error,true);return;}
+  }
+  bShowShot(d);bStatus('Replay OK — '+bSteps.length+' steps ✓');
+}
+function bEsc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function yScalar(v){
+  if(typeof v==='number'||typeof v==='boolean')return String(v);
+  return JSON.stringify(String(v)); // JSON string == valid YAML double-quoted scalar
+}
+function bYaml(){
+  const name=document.getElementById('bname').value.trim()||'My Recorded Journey';
+  let y='name: '+yScalar(name)+'\\ntimeout_ms: 30000\\nwarn_ms: 8000\\ncrit_ms: 20000\\nscreenshot_on_failure: true\\nsteps:\\n';
+  const ORDER=['action','selector','url','key','value','sensitive','text','contains','attribute','equals','min','checked','ms','name','full_page'];
+  for(const s of bSteps){
+    let first=true;
+    for(const k of ORDER){
+      if(!(k in s.step))continue;
+      const v=s.step[k];
+      const pre=first?'  - ':'    ';first=false;
+      if(Array.isArray(v)){
+        y+=pre+k+':\\n';
+        for(const it of v)y+='      - '+yScalar(it)+'\\n';
+      }else{
+        y+=pre+k+': '+yScalar(v)+'\\n';
+      }
+    }
+  }
+  return y;
+}
+function bExport(){
+  const name=document.getElementById('bname').value.trim()||'my-journey';
+  const slug=name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')||'my-journey';
+  document.getElementById('etitle').textContent='New check (from step builder)';
+  document.getElementById('efile').value=slug+'.yaml';
+  document.getElementById('eint').value='300';
+  document.getElementById('ehost').value='';
+  document.getElementById('eyaml').value=bYaml();
+  document.getElementById('msg').textContent='Review, then Lint & save.';
+  document.getElementById('editor').style.display='block';
+  window.scrollTo(0,document.body.scrollHeight);
+}
+
 // CSRF header needs the raw token (cookie is HttpOnly); the login page
 // stores it in sessionStorage. Missing (e.g. new tab) -> re-login.
 TOKEN=sessionStorage.getItem('synthmk_tok')||'';
