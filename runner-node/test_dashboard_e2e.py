@@ -151,9 +151,8 @@ def main() -> int:
                 check("default action for a button is click",
                       page.locator("#bact").input_value() == "click")
                 page.get_by_role("button", name="Add & test step").click()
-                page.wait_for_function(
-                    "document.querySelectorAll('#bsteplist li').length === 2",
-                    timeout=20000)
+                page.wait_for_selector("#bsteplist li:nth-of-type(2)", timeout=20000)
+                assert page.locator("#bsteplist li").count() == 2
                 check("click step tested live and added", True)
 
                 print("== pick input -> fill step ==")
@@ -162,9 +161,8 @@ def main() -> int:
                       page.locator("#bact").input_value() == "fill")
                 page.fill("#bval", "monitor-bot")
                 page.get_by_role("button", name="Add & test step").click()
-                page.wait_for_function(
-                    "document.querySelectorAll('#bsteplist li').length === 3",
-                    timeout=20000)
+                page.wait_for_selector("#bsteplist li:nth-of-type(3)", timeout=20000)
+                assert page.locator("#bsteplist li").count() == 3
                 check("fill step tested live and added", True)
 
                 if os.environ.get("SYNTHMK_E2E_SHOTS"):
@@ -178,9 +176,8 @@ def main() -> int:
                       page.locator("#bact").input_value() == "select_option")
                 page.select_option("#bval", "pro")
                 page.get_by_role("button", name="Add & test step").click()
-                page.wait_for_function(
-                    "document.querySelectorAll('#bsteplist li').length === 4",
-                    timeout=20000)
+                page.wait_for_selector("#bsteplist li:nth-of-type(4)", timeout=20000)
+                assert page.locator("#bsteplist li").count() == 4
                 check("select_option step tested live and added", True)
 
                 print("== pick headline -> text assertion ==")
@@ -190,25 +187,20 @@ def main() -> int:
                 check("assertion text prefilled from the element",
                       "Welcome to the Target App" in page.locator("#bval").input_value())
                 page.get_by_role("button", name="Add & test step").click()
-                page.wait_for_function(
-                    "document.querySelectorAll('#bsteplist li').length === 5",
-                    timeout=20000)
+                page.wait_for_selector("#bsteplist li:nth-of-type(5)", timeout=20000)
+                assert page.locator("#bsteplist li").count() == 5
                 check("text assertion tested live and added", True)
 
                 print("== quick page check + failing step is rejected ==")
                 page.once("dialog", lambda d: d.accept("Builder Target App"))
                 page.get_by_role("button", name="Assert title").click()
-                page.wait_for_function(
-                    "document.querySelectorAll('#bsteplist li').length === 6",
-                    timeout=20000)
+                page.wait_for_selector("#bsteplist li:nth-of-type(6)", timeout=20000)
+                assert page.locator("#bsteplist li").count() == 6
                 check("assert-title quick action added", True)
                 page.once("dialog", lambda d: d.accept("THIS TEXT IS NOT THERE"))
                 page.get_by_role("button", name="Assert text…").click()
-                page.wait_for_function(
-                    "document.getElementById('bstatus').textContent.includes('not added')",
-                    timeout=20000)
-                count = page.evaluate(
-                    "document.querySelectorAll('#bsteplist li').length")
+                page.wait_for_selector("#bstatus:has-text('not added')", timeout=20000)
+                count = page.locator("#bsteplist li").count()
                 check("failing step is NOT added to the flow", count == 6)
 
                 print("== export -> lint & save -> appears in table ==")
@@ -221,9 +213,7 @@ def main() -> int:
                 check("exported YAML uses a selector ladder",
                       "- \"[data-testid=" in yaml_text or "- \"#" in yaml_text)
                 page.get_by_role("button", name="Lint & save").click()
-                page.wait_for_function(
-                    "document.getElementById('msg').textContent.includes('Saved')",
-                    timeout=15000)
+                page.wait_for_selector("#msg:has-text('Saved')", timeout=15000)
                 check("builder-exported flow lints and saves",
                       (flows / "ui-e2e-journey.yaml").is_file())
 

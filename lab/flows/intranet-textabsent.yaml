@@ -13,5 +13,5 @@ steps:
   - action: check_text_absent
     text: maintenance
   - action: check_element_count
-    selector: a
+    selector: h1
     min: 1

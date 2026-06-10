@@ -10,7 +10,7 @@ steps:
   - action: open_url
     url: http://intranet-demo/index.html
   - action: check_title
-    contains: Internal Portal
+    contains: Internal Dashboard
   - action: check_element_count
-    selector: a
+    selector: h1
     min: 1

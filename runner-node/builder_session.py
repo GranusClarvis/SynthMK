@@ -146,7 +146,11 @@ def main() -> int:
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, **launch_args)
-        page = browser.new_page(viewport=VIEWPORT)
+        # bypass_csp: element inspection (PICK_JS/HIGHLIGHT_JS) runs in the
+        # page's main world, which a strict target-site CSP would veto. The
+        # builder is an authoring tool, not the monitor; scheduled runs use a
+        # normal page so checks see the site's real policy behavior.
+        page = browser.new_page(viewport=VIEWPORT, bypass_csp=True)
         ctx = {"sensitive_used": False}
         print(json.dumps({"ready": True}), flush=True)
 

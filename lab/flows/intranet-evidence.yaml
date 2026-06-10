@@ -13,4 +13,4 @@ steps:
   - action: screenshot
     name: home-baseline
   - action: check_title
-    contains: Internal Portal
+    contains: Internal Dashboard
