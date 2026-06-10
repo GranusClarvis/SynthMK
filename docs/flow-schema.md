@@ -18,7 +18,26 @@ Playwright code.
 | `screenshot_on_failure` | bool | no (false) | On a failing step, capture `screenshots/<flow>-fail-step<N>.png` and cite it in the output line (a clickable link when a screenshot base URL is configured — see below). |
 | `state_mode` | string | no (`digit`) | `digit` = runner computes the state (authoritative failure message); `dynamic` = emit a `P` state on success and let Checkmk threshold `duration` from `warn_ms`/`crit_ms`. |
 | `checkmk_host` | string | no | Piggyback target: attribute the result to this Checkmk host (the monitored site appears as its own host) instead of the runner node. Consumed by the runner-node scheduler / `checkmk/piggyback_wrap.sh`, not `runner.py`. |
-| `steps` | list | yes | Ordered steps (below). |
+| `type` | string | no (`flow`) | `flow` = declarative steps (this schema). `script` = operator Playwright Python — see **Script flows** below. |
+| `script` | string | script flows | Path to the `.py`, relative to the flow file. |
+| `steps` | list | yes (flow type) | Ordered steps (below). |
+
+## Selector fallback ladders
+
+Everywhere a step takes a `selector`, it accepts **either one selector or a
+list** — a fallback ladder tried in order until one matches:
+
+```yaml
+- action: click
+  selector:
+    - "[data-testid=login-submit]"   # survives redesigns
+    - "button[type=submit]"          # structural fallback
+```
+
+This is the multi-locator resilience commercial tools sell as their top
+anti-flake feature: a page change that breaks the CSS path still matches the
+test attribute. The recorder, the DevTools importer, and the dashboard step
+builder all emit ladders automatically.
 
 ## Step actions
 
@@ -44,9 +63,18 @@ Assertion steps (failure ends the flow CRIT with a clear message):
 | `action` | Fields | Failure message |
 |---|---|---|
 | `check_visible_text` | `text` | `Expected text '<text>' not found` |
+| `check_text_absent` | `text` | `Text '<text>' is visible on the page (expected absent)` — assert error banners are NOT there. |
 | `check_title` | `contains` | `Expected title to contain '<x>', got '<actual>'` |
 | `check_url` | `contains` | `Expected URL to contain '<x>', got '<actual>'` |
 | `check_element_count` | `selector`, `min?` (1) | `Expected at least <min> element(s) matching '<sel>', found <n>` |
+| `check_element_attribute` | `selector`, `attribute`, `equals?`/`contains?` | Attribute must exist; with `equals`/`contains`, its value must match. |
+| `check_checkbox` | `selector`, `checked?` (true) | Checkbox/radio state must match `checked`. |
+
+Structure:
+
+| `action` | Fields | Behavior |
+|---|---|---|
+| `include` | `flow` | Splice another file's `steps:` in place (path relative to the including flow). Share one login fragment across many checks instead of copying steps. Cycle-safe, max 3 levels / 200 expanded steps; the linter follows and lints the included file. |
 
 Per-step `timeout_ms` overrides the flow default.
 
@@ -68,6 +96,13 @@ Two placeholder forms are resolved in `url`/`value` fields at run time:
   looser is refused up front (UNKNOWN, flow never runs with blank creds).
   A missing name is a hard UNKNOWN with no value leaked. Every resolved secret
   value is **redacted to `***` in all service output and error messages**.
+* **`{{ totp.NAME }}` — MFA logins.** NAME is a **base32 TOTP seed** stored in
+  the same secrets file (the string you get from "can't scan the QR code?").
+  Resolves to the current 6-digit RFC 6238 code at run time, so SynthMK can
+  monitor MFA-protected logins. The seed is redacted like any secret.
+* **`{{ var.uuid }}` / `{{ var.timestamp }}` / `{{ var.random }}`** — builtin
+  per-run values, stable within one run: type `ticket-{{ var.uuid }}` into a
+  form, then assert the same uuid is echoed back.
 * `{{ NAME }}` — legacy environment lookup (unknown → empty string). Fine for
   non-secrets like base URLs.
 
@@ -144,6 +179,57 @@ the runner-node scheduler wraps the result in a Checkmk piggyback envelope
 (`checkmk/piggyback_wrap.sh`) so the **monitored site appears as its own Checkmk
 host** carrying the synthetic service — one runner, many target hosts.
 
+## Script flows (`type: script`)
+
+When the declarative schema isn't enough (conditionals, loops, computed
+values), a flow can be real Playwright Python:
+
+```yaml
+name: Checkout Deep Journey
+type: script
+script: scripts/checkout.py     # relative to this file
+warn_ms: 8000
+crit_ms: 20000
+screenshot_on_failure: true
+```
+
+The script defines `run(page, api)`: `page` is the raw Playwright sync Page,
+`api` adds the monitoring contract — `api.step("label")` (named per-step
+timing graphed in Checkmk + failure attribution), `api.secret("name")`
+(secrets-file value, auto-redacted + screenshot-masked), `api.totp("name")`,
+`api.var("uuid")`, `api.screenshot("name")`, `api.fail("message")`. A bare
+`assert` fails the check cleanly; syntax errors and a missing `run()` are
+UNKNOWN, never tracebacks. See
+[`flows/scripts/example_journey.py`](../flows/scripts/example_journey.py).
+
+**Trust gate:** script flows run operator code with full page access, so the
+node must opt in with `SYNTHMK_ALLOW_SCRIPTS=1` (compose template comment).
+Without it every script flow reports UNKNOWN. Enable only where everyone who
+can write the flows volume may run code as the runner user.
+
+## Importing Chrome DevTools recordings
+
+Every Chrome ships a recorder (F12 → Recorder). Export the recording as JSON
+and convert it — no extension installed on the recording machine:
+
+```bash
+python3 runner/import_devtools.py recording.json -o flows/my-check.yaml
+```
+
+DevTools' multiple selectors per element become SynthMK fallback ladders;
+password fields are swapped to `{{ secret.* }}` + `sensitive: true` (the
+recorded plaintext is discarded); unsupported step types are skipped with
+notes; output is linted before write. Review, add `check_*` assertions, set
+thresholds, schedule.
+
+## Visual step builder
+
+The node dashboard (`:9181` → **Step builder**) authors flows point-and-click
+against a live page: open a URL, click an element in the preview (Chrome-
+inspect style), get a verified-unique selector ladder + suggested action,
+**every added step executes immediately on the live page** (added = tested),
+then export to the lint-gated editor. Passwords default to secret references.
+
 ## Examples
 
 - [`flows/example-ok.yaml`](../flows/example-ok.yaml) — passing journey.
@@ -156,6 +242,14 @@ host** carrying the synthetic service — one runner, many target hosts.
 - [`lab/flows/intranet-login.yaml`](../lab/flows/intranet-login.yaml) — the
   flagship 10-step login journey: secrets file, sensitive fill, wait_for_url,
   hover menu, select_option, element count. Runs E2E in the LAN lab.
+- [`flows/example-advanced.yaml`](../flows/example-advanced.yaml) — v0.5
+  feature tour: selector ladders, `include`, `{{ totp.* }}`, `{{ var.* }}`,
+  the new assertions (template, fictional portal).
+- [`flows/shared/portal-login.yaml`](../flows/shared/portal-login.yaml) —
+  reusable login fragment for `include`.
+- [`flows/example-script.yaml`](../flows/example-script.yaml) +
+  [`flows/scripts/example_journey.py`](../flows/scripts/example_journey.py) —
+  script flow template.
 - [`flows/demo/index.html`](../flows/demo/index.html) — bundled stable local target page.
 
 ## Recorder

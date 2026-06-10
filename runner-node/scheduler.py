@@ -187,9 +187,16 @@ def run_flow(flow: Flow) -> None:
         if not flow.path.is_file():
             payload = synthetic_line(f"SynthMK {flow.file}", 3, "flow file not found")
         else:
-            cmd = [PYTHON, str(HOME / "runner" / "runner.py"), str(flow.path)]
-            if OUTPUT == "native":
-                cmd.append("--json")
+            override = os.environ.get("SYNTHMK_RUNNER_CMD", "")
+            if override:
+                # Test/stress hook: substitute the browser runner with a stub
+                # so pool/spool/reload behavior can be exercised at high flow
+                # counts without launching hundreds of Chromiums.
+                cmd = override.split() + [str(flow.path)]
+            else:
+                cmd = [PYTHON, str(HOME / "runner" / "runner.py"), str(flow.path)]
+                if OUTPUT == "native":
+                    cmd.append("--json")
             try:
                 proc = subprocess.run(
                     cmd, capture_output=True, text=True, timeout=RUN_TIMEOUT_S,

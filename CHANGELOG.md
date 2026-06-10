@@ -4,9 +4,80 @@ All notable changes to SynthMK are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); SynthMK uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.5.0] - 2026-06-10
 
-### Added
+The authoring & operations release: four ways to create a check (record /
+import / build visually / write YAML or Playwright code), and a node you can
+operate like a fleet appliance (pause, tags, history, audit, roles) — plus
+multi-node locations.
+
+### Added — authoring
+- **Selector fallback ladders**: every `selector:` accepts a list tried in
+  order (multi-locator anti-flake — a redesign that breaks the CSS path still
+  matches the test attribute). Runner resolves the first matching candidate;
+  the linter validates ladders; recorder, importer and builder emit them.
+- **Visual step builder** on the node dashboard (`runner-node/builder_session.py`
+  + `/api/builder/*`): open a live page, click elements in the preview
+  (Chrome-inspect style) → verified-unique selector ladder + suggested action
+  (inputs→fill, passwords→secret refs, selects→select_option with real
+  options, text→assertion) → **every added step executes immediately on the
+  live page** (added = tested) → replay → export into the lint-gated editor.
+  One token+CSRF-gated session per node; idle worker reaped after 10 min.
+- **Chrome DevTools Recorder import** (`runner/import_devtools.py`): converts
+  the JSON every Chrome can record (F12 → Recorder → export) into a flow —
+  no extension needed on the recording machine. DevTools `selectors[]` arrays
+  become fallback ladders; recorded password plaintext is **discarded** and
+  replaced with `{{ secret.* }}` + `sensitive: true`; unsupported step types
+  are skipped with notes; output linted before write. 25-check importer
+  contract suite wired into `make validate`.
+- **Script flows** (`type: script` + `script: x.py`): full Playwright Python
+  `run(page, api)` for journeys YAML can't express — named per-step timings
+  (`api.step`), auto-redacted `api.secret()`, `api.totp()`, `api.var()`,
+  masked `api.screenshot()`, clean CRIT/UNKNOWN mapping (assertions, fails,
+  syntax errors — never tracebacks). **Trust-gated: off unless
+  `SYNTHMK_ALLOW_SCRIPTS=1`.** Template: `flows/example-script.yaml`.
+- **Sub-flows**: `action: include, flow: shared/login.yaml` splices a
+  reusable fragment (shared login) — cycle-safe, ≤3 levels, ≤200 expanded
+  steps; the linter follows and lints included files (`--base-dir`).
+- **MFA/TOTP secrets**: `{{ totp.NAME }}` derives the current RFC 6238 code
+  from a base32 seed stored in the secrets file (stdlib-only; seed redacted
+  like any credential). Monitors MFA-protected logins.
+- **Builtin variables**: `{{ var.uuid }}`, `{{ var.timestamp }}`,
+  `{{ var.random }}` — per-run stable (type it, then assert it echoed).
+- **New assertions**: `check_text_absent` (assert error banners are NOT
+  shown), `check_element_attribute` (present/equals/contains),
+  `check_checkbox` (checked state).
+
+### Added — operations
+- **Pause/resume** from the dashboard: pausing rewrites the flows.conf line
+  with a `#PAUSED ` prefix — a comment to the scheduler (zero special-casing),
+  structured state to the dashboard, schedule preserved for resume.
+- **Tags**: `tags=payments,critical` conf token; shown as pills in the table,
+  edited in the editor (scheduler tolerates and ignores them).
+- **Flow version history + rollback**: every dashboard save snapshots the
+  prior content (`flows/.history`, keep `SYNTHMK_HISTORY_KEEP`=10); view any
+  version and roll back (lint-gated) from the editor.
+- **Audit trail**: append-only JSONL (`SYNTHMK_AUDIT_LOG`, default
+  `/var/log/synthmk-audit.log`, pre-created pwuser-owned) of every login
+  attempt and state change — who/when/what/from-where; `/api/audit` (admin).
+- **Viewer role**: `SYNTHMK_VIEWER_TOKEN` = read-only sign-in (live table,
+  YAML, history; every write refused + write UI hidden).
+- Scheduler: `SYNTHMK_RUNNER_CMD` stub hook for browser-free stress testing.
+
+### Tests
+- Runner contract suite 69 → **120 checks**; importer **25**; dashboard HTTP
+  contract **26** (`runner-node/test_admin_contract.py`: auth+roles, lint
+  gate, history/rollback, pause, audit) — all in `make validate`.
+- **Dashboard UI e2e, 21 checks** (`runner-node/test_dashboard_e2e.py`, real
+  Chromium in the runner image): sign-in → builder point-and-click on a live
+  preview → tested steps (click/fill/select/assert) → failing step rejected →
+  export → lint & save → appears in table → pause. All green 2026-06-10.
+- **Scheduler stress** (`runner-node/stress_test.py`): 150 flows sustained
+  (4× the documented envelope) with hot-reload and run-now under load, plus a
+  deliberate overload phase asserting the node **alarms loudly** (scheduler
+  self-service → WARN with overdue count) instead of degrading silently.
+
+### Added — platform
 - **Multi-node "locations" special agent** (`checkmk/special/agent_synthmk.py`,
   `checkmk/plugin/{rulesets/special_agent_synthmk,server_side_calls/synthmk}.py`,
   `runner-node/admin_server.py` `/api/results`): a Checkmk datasource program

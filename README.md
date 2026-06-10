@@ -2,17 +2,23 @@
 
 **Website & docs: https://granusclarvis.github.io/SynthMK-Web/ · Downloads: [GitHub Releases](https://github.com/GranusClarvis/SynthMK/releases)**
 
-Checkmk synthetic monitoring addon for browser-recorded website flows.
+Checkmk synthetic monitoring addon for browser journeys — record, build, or
+script a flow; a hardened runner node executes it on schedule; the result is a
+normal Checkmk service with graphs, thresholds, and failure screenshots.
 
-SynthMK's first target is deliberately small:
+**Four ways to author a check** (simplicity first — nobody is forced to code,
+nobody is capped by YAML either):
 
-1. Record or define a readable browser flow.
-2. Run it with a Chrome/Playwright-based runner.
-3. Emit Checkmk-compatible service output.
-4. Show the result as a normal Checkmk service.
-
-The product direction is simplicity first. Users should not need to write
-Playwright or Selenium code for common checks.
+1. **Record** — browser extension (Chrome/Edge/Firefox) records clicks/typing
+   into readable YAML; passwords become secret references automatically.
+2. **Import** — every Chrome has a recorder built in (F12 → Recorder); convert
+   its JSON export with `runner/import_devtools.py`. No extension needed.
+3. **Build visually** — the node dashboard's **step builder**: click elements
+   on a live page preview (Chrome-inspect style), pick the action, every step
+   is tested live as you add it, export to the lint-gated editor.
+4. **Write** — readable YAML flows (with selector fallback ladders, sub-flow
+   `include`, TOTP/MFA secrets), or full **Playwright Python script checks**
+   for power users (trust-gated, off by default).
 
 ## Why SynthMK (vs Checkmk's own Synthetic Monitoring)
 
@@ -25,22 +31,21 @@ SynthMK aims at the gap underneath it:
 | | Checkmk Synthetic Monitoring (Robotmk) | **SynthMK** |
 |---|---|---|
 | Engine | Robot Framework | Playwright (direct) |
-| Authoring | RF keyword DSL / `.robot` | readable YAML + Chrome recorder |
-| Edition | enterprise / commercial | works on **Raw/CRE (free)** |
-| Integration | deep (bakery, dedicated services) | agent **local check** (drop-in) |
-| Credentials | secret env vars (plaintext in agent config) | node-local 0600 secrets file, `{{ secret.NAME }}`, output-redacted |
+| Authoring | RF keyword DSL / `.robot` + RCC/CSM CLI | recorder, DevTools import, visual step builder, YAML, or Playwright Python |
+| Edition | Pro/Ultimate + per-test subscription | works on **Raw/CRE (free)**, MIT |
+| Credentials | secret env vars (plaintext in agent config) | node-local 0600 secrets file, `{{ secret.NAME }}` + `{{ totp.NAME }}` MFA, output-redacted |
 | Integration depth | bakery + dedicated services | **native check plugin**: Setup ruleset, unit-aware graphs, perf-o-meter, per-step metrics |
-| Check management | bakery rules + .robot redeploys | **web dashboard** on the node: live states, run-now, lint-gated editor |
-| Footprint | a platform | one container + one MKP + one extension |
+| Check management | bakery rules + .robot redeploys | **web dashboard** on the node: live states, run-now, pause/resume, tags, version history + rollback, audit log, lint-gated editor |
+| Footprint | 4–8 cores / 8–16 GB per test host | one container + one MKP + one extension |
 
 If you run **Checkmk Raw** and want *"is my login flow still working?"* as a
 normal service — without Robot Framework or a paid tier — that's SynthMK.
-v0.3.0 is the hardening release: secure login credentials end to end, a
-worker-pool scheduler measured at 60 flows on one node, an authenticated
-screenshot server, an optional TLS agent transport, and a recorder that never
-sees your passwords. Test evidence: [`docs/STATUS.md`](docs/STATUS.md) ·
-capacity math: [`docs/scaling.md`](docs/scaling.md) · how we compare:
-[`docs/competitive-landscape.md`](docs/competitive-landscape.md).
+v0.5.0 adds the authoring & operations layer on top of the v0.3 hardening:
+selector fallback ladders, sub-flows, TOTP/MFA, the visual step builder, the
+DevTools importer, script checks, and dashboard management (pause/tags/
+history/audit/viewer role) — all contract- and e2e-tested. Test evidence:
+[`docs/STATUS.md`](docs/STATUS.md) · capacity math: [`docs/scaling.md`](docs/scaling.md)
+· how we compare: [`docs/competitive-landscape.md`](docs/competitive-landscape.md).
 
 ## MVP Components
 
