@@ -135,13 +135,25 @@ Source of truth for autonomous scheduling is Clarvis
 - [x] `[SYNTHMK_BUILDER_CSP_BYPASS]` builder authoring page sets bypass_csp so
       element picking works on CSP-strict sites (monitoring runs unaffected).
 
-### Open (v0.7 candidates)
+## v0.7.0 — cert + trace + store + soundness (this release)
 
-- [ ] `[SYNTHMK_CERT_AND_LINKS_CHECKS]` cert-expiry + broken-links check types.
-- [ ] `[SYNTHMK_TRACE_ARTIFACTS]` Playwright trace.zip on failure next to PNGs.
+- [x] `[SYNTHMK_CERT_CHECKS]` [VERIFIED live] `type: cert` TLS-expiry checks,
+      cert_days_left metric, internal/self-signed CA fallback. → runner.py,
+      flows/example-cert.yaml, lab/flows/cmk-cert.yaml.
+- [x] `[SYNTHMK_TRACE_ARTIFACTS]` [VERIFIED live] `trace_on_failure` keeps a
+      Playwright trace.zip; shot server serves .trace.zip with its token.
+- [x] `[SYNTHMK_STORE_LISTINGS]` extension/store/ CWS+AMO package + website
+      privacy page; manifest description fixed to the 132-char CWS limit.
+      (Actual submission needs the operator's store accounts.)
+- [x] `[SYNTHMK_SOUNDNESS_FIXES]` selector-ladder budget, retry state reset,
+      include/script path confinement, importer candidate cap, graceful
+      shutdown, builder SSRF blocklist, log token redaction, audit tail-read.
+
+### Open (v0.8 candidates)
+
+- [ ] `[SYNTHMK_BROKEN_LINKS_CHECK]` crawl-and-verify-links check type
+      (the half of CERT_AND_LINKS not shipped in v0.7).
 - [ ] `[SYNTHMK_FLOW_GROUPS]` serialized groups + lint-time interval math.
-- [ ] `[SYNTHMK_STORE_LISTINGS]` Chrome Web Store / AMO recorder listings
-      (removes the developer-mode install step).
 - [ ] `[SYNTHMK_AI_SCAFFOLD]` "describe the journey in English -> draft YAML"
       authoring assist (Checkly-style; authoring only, never the hot path).
 - [ ] `[SYNTHMK_NODE_METRICS]` Prometheus /metrics on the node (runs, queue

@@ -1,8 +1,34 @@
 # SynthMK: Status, Test Evidence, Open Work & Security
 
-**As of:** 2026-06-10 · **Version:** 0.6.0 · **Branch:** `main`
+**As of:** 2026-06-10 · **Version:** 0.7.0 · **Branch:** `main`
 **Repo:** `git@github.com:GranusClarvis/SynthMK.git` ·
 **Website:** https://granusclarvis.github.io/SynthMK-Web/
+
+## -3. What was done in v0.7.0 (cert + trace + store + soundness), evidence 2026-06-10
+
+New: `type: cert` TLS-expiry checks (cert_days_left metric; internal/self-
+signed CA fallback), `trace_on_failure` Playwright trace.zip artifacts
+(tokenized by the shot server), and the browser-extension store submission
+package (CWS + AMO listing, privacy policy, website privacy page).
+
+Fixes from an adversarial soundness review (two reviewers over engine and node
+services; false alarms discarded, accepted-by-design items noted):
+
+| Fix | What it prevents |
+|---|---|
+| Selector ladder returns remaining budget | a slow ladder granting the action a second full timeout (step exceeding its budget) |
+| Retry resets secret/var state | a retry reusing a stale `{{ var.uuid }}` or masking the real failure with a prior secret |
+| include/script confined to flow tree (symlink-aware) | `../../etc` escape or a planted symlink loading foreign code/steps |
+| DevTools importer caps candidates (8/step, 200 scan) | a hostile recording.json exhausting memory/CPU |
+| Entrypoint graceful shutdown (no exec; trap + wait) | truncated spool or audit lines when the container is stopped/killed |
+| Builder SSRF blocklist | an admin screenshotting cloud-metadata/loopback endpoints from the node |
+| Login token redacted from logs; audit tail-read | the token leaking into container logs; loading a huge audit file into memory |
+
+Live verification on the 0.7.0 image: 17 concurrent lab checks green
+(incl. the cert check, visible as a Checkmk service with cert_days_left, and a
+trace-on-failure demo whose trace.zip downloads from the shot server with its
+token and 403s without). `docker stop` confirmed to fire the entrypoint's
+shutdown handler. All three authoring paths e2e green. Contract 145, admin 40.
 
 ## -2. What was done in v0.6.0 (verified end to end + hardening), evidence 2026-06-10
 

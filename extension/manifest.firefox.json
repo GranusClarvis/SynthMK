@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SynthMK Recorder",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Record browser journeys and export SynthMK YAML synthetic checks for Checkmk. Passwords become secret references, never recorded.",
   "browser_specific_settings": {
     "gecko": {

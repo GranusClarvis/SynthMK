@@ -4,6 +4,56 @@ All notable changes to SynthMK are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); SynthMK uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-06-10
+
+New check types and artifacts, the extension store package, and a round of
+fixes from an adversarial soundness review of the engine and node services.
+
+### Added
+- **Certificate checks** (`type: cert`): browser-free TLS expiry monitoring.
+  Reports a `cert_days_left` metric and alarms as the remaining days cross
+  `warn_days`/`crit_days`. Monitors internal-CA and self-signed certificates
+  too (falls back to openssl and notes an unverified chain); set
+  `require_valid_chain: true` to also fail when the chain does not verify.
+- **Trace artifacts** (`trace_on_failure: true`): a failing browser flow keeps
+  a Playwright trace.zip next to the failure screenshot, served by the node's
+  authenticated shot server and linked from the failing service (open at
+  trace.playwright.dev). Off by default.
+- **Extension store package** (`extension/store/`): Chrome Web Store and
+  Firefox AMO listing copy, per-permission justifications, a submission
+  runbook, and a privacy policy, plus a privacy page on the website. Fixed the
+  manifest description to the 132-char CWS limit found during the pass.
+
+### Fixed (adversarial soundness review)
+- Selector fallback ladders now return the remaining time budget, so a slow
+  ladder no longer hands the following action a second full timeout. One step
+  stays inside one budget.
+- `run_with_retries` resets the per-process secret/variable state between
+  attempts: each retry gets a fresh `{{ var.uuid }}` and its failure message
+  is not masked by a previous attempt's secret.
+- `include` and script paths are confined to the flow's own directory tree
+  (symlink-aware), so a flow cannot splice steps or load code from outside it.
+- The DevTools importer caps selector candidates (8 per element, 200 scanned)
+  against a hostile or pathological recording.
+- Container shutdown is graceful: the entrypoint no longer `exec`s the agent
+  transport, so its trap forwards SIGTERM to the scheduler, dashboard and shot
+  server and waits for them, and the scheduler sweeps stale spool `.tmp` files
+  on start. No more truncated spool or audit lines on stop.
+- The visual builder refuses loopback, link-local, private and cloud-metadata
+  URLs by default (SSRF hardening; opt out with
+  `SYNTHMK_BUILDER_ALLOW_INTERNAL=1`).
+- The login token is redacted from request logs, and the audit endpoint reads
+  only the tail of the log instead of the whole file.
+
+### Verified live (0.7.0 image, lab stack)
+- 17 concurrent checks green, including the new cert check (cert_days_left in
+  the spool and as a Checkmk service) and a trace-on-failure demo whose
+  trace.zip downloads from the shot server with its token (403 without).
+- Graceful shutdown confirmed: `docker stop` triggers the entrypoint's
+  shutdown handler.
+- All three authoring paths e2e on the 0.7.0 image (extension, DevTools
+  import, step builder). Contract suite 145, admin HTTP suite 40.
+
 ## [0.6.0] - 2026-06-10
 
 The verification and hardening release: everything proven live against a full

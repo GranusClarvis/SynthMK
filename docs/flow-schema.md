@@ -18,8 +18,10 @@ Playwright code.
 | `screenshot_on_failure` | bool | no (false) | On a failing step, capture `screenshots/<flow>-fail-step<N>.png` and cite it in the output line (a clickable link when a screenshot base URL is configured; see below). |
 | `state_mode` | string | no (`digit`) | `digit` = runner computes the state (authoritative failure message); `dynamic` = emit a `P` state on success and let Checkmk threshold `duration` from `warn_ms`/`crit_ms`. |
 | `checkmk_host` | string | no | Piggyback target: attribute the result to this Checkmk host (the monitored site appears as its own host) instead of the runner node. Consumed by the runner-node scheduler / `checkmk/piggyback_wrap.sh`, not `runner.py`. |
-| `type` | string | no (`flow`) | `flow` = declarative steps (this schema). `script` = operator Playwright Python; see **Script flows** below. |
-| `script` | string | script flows | Path to the `.py`, relative to the flow file. |
+| `type` | string | no (`flow`) | `flow` = declarative steps (this schema). `script` = operator Playwright Python (see **Script flows**). `cert` = TLS certificate expiry (see **Certificate checks**). |
+| `script` | string | script flows | Path to the `.py`, relative to the flow file (confined to the flow's directory tree). |
+| `max_attempts` | int | no (1) | 1 to 3. A WARN/CRIT outcome re-runs with a fresh browser before alarming; UNKNOWN is never retried; the attempt count shows in the summary. |
+| `trace_on_failure` | bool | no (false) | Keep a Playwright trace.zip (screenshots plus DOM snapshots) next to the failure PNG when the flow fails. Open it at trace.playwright.dev. |
 | `steps` | list | yes (flow type) | Ordered steps (below). |
 
 ## Selector fallback ladders
@@ -178,6 +180,37 @@ By default a flow becomes a service of the runner node. Set `checkmk_host:` and
 the runner-node scheduler wraps the result in a Checkmk piggyback envelope
 (`checkmk/piggyback_wrap.sh`) so the **monitored site appears as its own Checkmk
 host** carrying the synthetic service: one runner, many target hosts.
+
+## Certificate checks (`type: cert`)
+
+A certificate check needs no browser and no steps, just an endpoint. It opens
+one TLS connection and reports the days left until the certificate expires:
+
+```yaml
+name: Synthetic TLS Certificate (portal)
+type: cert
+host: portal.example.internal   # or url: https://portal.example.internal:8443/
+port: 443                       # optional, default 443 (or the url's port)
+warn_days: 21                   # WARN when fewer days remain
+crit_days: 7                    # CRIT when fewer days remain
+require_valid_chain: false      # true also fails when the chain does not verify
+```
+
+The result carries a `cert_days_left` metric (graphable in Checkmk) and a
+summary naming the expiry date. Internal-CA and self-signed certificates are
+still monitored for expiry: if the chain does not verify against the system
+trust store and `require_valid_chain` is off, the runner falls back to reading
+the certificate via `openssl` and the summary notes that the chain was not
+verified. Cert checks honour `checkmk_host` (piggyback) and `max_attempts`.
+
+## Trace artifacts (`trace_on_failure`)
+
+Set `trace_on_failure: true` on any browser flow and a failing run keeps a
+Playwright `trace.zip` (full screenshots and DOM snapshots) next to the
+failure screenshot. The node serves it through the same authenticated
+screenshot server, and the failing service links it (download, then open at
+trace.playwright.dev). Tracing is off by default because it costs memory and
+the zips are large; turn it on for the journeys you actually need to debug.
 
 ## Script flows (`type: script`)
 
