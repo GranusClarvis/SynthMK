@@ -422,8 +422,7 @@ def _run_step(page, step: dict[str, Any], default_timeout: int, ctx: dict[str, A
             shot = Path(shot_dir) / f"{ctx.get('flow_stem', 'flow')}-{label}.png"
             try:
                 Path(shot_dir).mkdir(parents=True, exist_ok=True)
-                if ctx.get("sensitive_used"):
-                    page.evaluate(_MASK_INPUTS_JS)
+                _mask_before_shot(page, ctx)
                 page.screenshot(path=str(shot), full_page=bool(step.get("full_page", False)))
                 ctx.setdefault("screenshots", []).append(str(shot))
             except Exception as exc:
@@ -525,6 +524,48 @@ _MASK_INPUTS_JS = (
     "{ try { el.value = '\\u2022\\u2022\\u2022'; } catch (e) {} } }"
 )
 
+# Defense-in-depth: a password field is a credential by HTML semantics, so it is
+# blanked before EVERY capture — even when the flow author forgot to mark the
+# fill `sensitive: true`. A login screenshot can never leak the password, and
+# this requires no per-flow opt-in.
+_MASK_PASSWORDS_JS = (
+    "() => { for (const el of document.querySelectorAll('input[type=password]')) "
+    "{ try { el.value = '\\u2022\\u2022\\u2022'; } catch (e) {} } }"
+)
+
+
+def _mask_before_shot(page, ctx: dict[str, Any]) -> None:
+    """Blank credential-bearing form fields just before a screenshot.
+
+    Always blanks `input[type=password]` (HTML-semantic credentials). When the
+    flow has touched a declared secret (`sensitive: true` fill or api.secret()),
+    every input/textarea is blanked too — anything typed afterward could be a
+    token. Masking must never break a capture, so failures are swallowed.
+    """
+    try:
+        page.evaluate(_MASK_INPUTS_JS if ctx.get("sensitive_used")
+                      else _MASK_PASSWORDS_JS)
+    except Exception:
+        pass
+
+
+def _flow_has_sensitive(flow: dict[str, Any]) -> bool:
+    """True if the flow may type a credential into the page.
+
+    Declarative flows: any `fill` step marked `sensitive: true`. Script flows
+    can pull from the secret store at will via `api.secret()`, so they are
+    treated as potentially sensitive. Used to strip rich snapshots/screenshots
+    from a served `.trace.zip`, which would otherwise embed the credential DOM
+    captured *before* the failure-time mask runs.
+    """
+    if str(flow.get("type", "flow")) == "script":
+        return True
+    for step in flow.get("steps", []) or []:
+        if (isinstance(step, dict) and step.get("action") == "fill"
+                and step.get("sensitive")):
+            return True
+    return False
+
 
 class ScriptApi:
     """The `api` object handed to a script flow's run(page, api).
@@ -603,8 +644,7 @@ def _capture_screenshot(page, ctx: dict[str, Any], name: str) -> str | None:
     shot = Path(shot_dir) / f"{ctx.get('flow_stem', 'flow')}-{label}.png"
     try:
         Path(shot_dir).mkdir(parents=True, exist_ok=True)
-        if ctx.get("sensitive_used"):
-            page.evaluate(_MASK_INPUTS_JS)
+        _mask_before_shot(page, ctx)
         page.screenshot(path=str(shot), full_page=False)
         ctx.setdefault("screenshots", []).append(str(shot))
         return str(shot)
@@ -686,7 +726,6 @@ def _fetch_cert_expiry(host: str, port: int, timeout_s: float,
     still be expiry-monitored (their chains are the operator's business; the
     summary says the chain was not verified).
     """
-    import datetime
     import socket as socket_mod
     import ssl
 
@@ -842,8 +881,16 @@ def run_flow(
         # costs memory and the zips are large.
         tracing = bool(flow.get("trace_on_failure"))
         if tracing:
+            # A served trace.zip embeds DOM snapshots + screenshots taken
+            # continuously — for a credential flow those capture the password
+            # BEFORE the failure-time mask runs, leaking it on the same :9180
+            # server as the PNGs. For sensitive flows keep only the action/timing
+            # log (snapshots/screenshots off), which is what a trace is usually
+            # opened for anyway.
+            rich_trace = not _flow_has_sensitive(flow)
             try:
-                page.context.tracing.start(screenshots=True, snapshots=True)
+                page.context.tracing.start(screenshots=rich_trace,
+                                           snapshots=rich_trace)
             except Exception:
                 tracing = False  # tracing must never break the check itself
 
@@ -919,9 +966,9 @@ def run_flow(
                         shot_dir.mkdir(exist_ok=True)
                         shot = shot_dir / f"{path.stem}-fail-step{i}.png"
                         try:
-                            if ctx["sensitive_used"]:
-                                # Blank form fields so the PNG can't leak creds.
-                                page.evaluate(_MASK_INPUTS_JS)
+                            # Blank password fields always; all inputs once a
+                            # declared secret was used — the PNG can't leak creds.
+                            _mask_before_shot(page, ctx)
                             page.screenshot(path=str(shot))
                             result.screenshot = str(shot)
                         except Exception:

@@ -118,9 +118,14 @@ and the service line links it via `SYNTHMK_SHOT_BASE_URL`, including the
 per-file access token. The link only renders if **"Escape HTML codes in service
 output"** is **Off** for the runner host; scope that rule to this host only
 (escaping-off is an XSS surface, Werk #6058; SynthMK output is always a single
-sanitized line). **Credential flows:** screenshots taken after a
-`sensitive: true` fill blank all form fields before capture; values from the
-secrets file are additionally redacted from service output.
+sanitized line). **Credential flows:** `input[type=password]` fields are blanked
+before **every** screenshot — even if the flow author never marked the fill
+`sensitive: true` — so a login PNG can't leak the password. After a declared
+secret is used (`sensitive: true` fill or `api.secret()`), all inputs/textareas
+are blanked, and the served `trace.zip` is recorded **without** DOM
+snapshots/screenshots (it would otherwise embed the credential DOM captured
+before the failure mask runs); values from the secrets file are additionally
+redacted from service output.
 
 ## Security summary
 
