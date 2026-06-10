@@ -101,8 +101,9 @@ docker exec "$NAME" sh -c '
     case "$base" in *scheduler*) continue;; esac
     if [ $(( now - mtime )) -gt "$maxage" ]; then stale=$((stale+1)); fi
     if grep -q "warming up" "$f"; then warm=$((warm+1));
-    elif grep -qE "^(<<<local>>>)?$|^0 |^P " "$f" || grep -q "^0 \|^P " "$f"; then fresh=$((fresh+1)); fi
-    if grep -qE "^[123] " "$f"; then failed=$((failed+1)); fi
+    # native (default) results are JSON entries; local results are digit lines
+    elif grep -qE "\"status\": 0" "$f" || grep -qE "^0 |^P " "$f"; then fresh=$((fresh+1)); fi
+    if grep -qE "^[123] " "$f" || grep -qE "\"status\": [123]" "$f"; then failed=$((failed+1)); fi
   done
   echo "   ok-results=$fresh still-warming=$warm stale=$stale non-ok=$failed"
 '

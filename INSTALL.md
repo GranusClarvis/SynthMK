@@ -47,7 +47,7 @@ SYNTHMK_FLOW_FILES="example-ok.yaml login.yaml"   # space-separated
 SYNTHMK_DEMO_URL="https://your-app.local"          # {{ }} value(s)
 ```
 
-Secrets stay out of the repo — flows reference `{{ ENV_NAME }}` and the runner
+Secrets stay out of the repo: flows reference `{{ ENV_NAME }}` and the runner
 resolves them from the environment at run time (see `docs/flow-schema.md`).
 
 ## Verify
@@ -66,7 +66,7 @@ warn/crit thresholds applied automatically.
 
 ```bash
 cd /path/to/SynthMK && git pull
-sudo ./install.sh          # idempotent — overwrites payload + local-check in place
+sudo ./install.sh          # idempotent: overwrites payload + local-check in place
 ```
 
 Installing a newer checkout over an older one is safe: `install.sh` recopies the

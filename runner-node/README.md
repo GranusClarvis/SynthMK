@@ -21,19 +21,19 @@ able to reach), and exposes the results to Checkmk like any monitored host.
 | Agent transport | socat + `agent_output.sh` (lab) **or** official Checkmk agent over TLS (production, see below) | Answers Checkmk polls on `6556` with `<<<check_mk>>>` + fresh spool sections. |
 | Scheduler | `scheduler.py` | Worker-pool scheduler (`SYNTHMK_MAX_CONCURRENCY`, default 4): per-flow intervals → Checkmk **spool dir**, startup stagger, overlap suppression, hard run timeout, warmup lines, screenshot pruning, and a **`SynthMK Scheduler` self-monitoring service** that WARNs when the node is oversubscribed. See [`../docs/scaling.md`](../docs/scaling.md). |
 | Screenshot server | `shot_server.py` | Serves failure PNGs on `9180` with **per-file HMAC token URLs** (node-local key, auto-created 0600). No directory listing, no traversal, `/healthz` for container healthchecks. `SYNTHMK_SHOT_AUTH=off` only if you really want the old open behavior. |
-| Schedule | `flows.conf` | `flow_file interval_s [checkmk_host]` per line — the scaling surface. Hot-reloaded on change. |
+| Schedule | `flows.conf` | `flow_file interval_s [checkmk_host]` per line; this is the scaling surface. Hot-reloaded on change. |
 | Secrets | mounted file → `$SYNTHMK_SECRETS_FILE` | YAML mapping for `{{ secret.* }}` refs; chmod 600 on the host; the entrypoint stages a runner-owned copy so bind-mount ownership doesn't matter. Values are redacted from all output. |
 | TLS upgrade | `register_agent.sh` + `CMK_AGENT_DEB` build-arg | Two ways to land the official agent + `cmk-agent-ctl` (TLS): **bake** it into the image at build time (`--build-arg CMK_AGENT_DEB=<site .deb url>`) for zero-download production nodes, or **install at runtime** with `register_agent.sh`. Either way the per-site TLS *registration* is a one-time runtime step; then run with `SYNTHMK_AGENT_MODE=official`. |
 
 Privilege model: the container may start as root (volume chown + official agent
 daemon), but the **scheduler, browsers, and HTTP servers all run as the
-unprivileged `pwuser`** — a compromised page never executes as root. Chromium
+unprivileged `pwuser`**, so a compromised page never executes as root. Chromium
 still runs `--no-sandbox` inside the container (standard for Chromium-in-Docker);
 treat flow targets as trusted.
 
 ## Run it (production template)
 
-Use [`compose.yaml`](compose.yaml) — it carries the hardened defaults (resource
+Use [`compose.yaml`](compose.yaml); it carries the hardened defaults (resource
 limits sized to the concurrency, `no-new-privileges`, healthcheck, named
 volumes):
 
@@ -65,13 +65,13 @@ becomes a service, plus the `SynthMK Scheduler` health service. A flow with a
 
 ## Production transport: official agent over TLS
 
-The socat transport is plaintext and unauthenticated — fine on a trusted lab
+The socat transport is plaintext and unauthenticated: fine on a trusted lab
 segment with `6556` firewalled to the Checkmk server, not fine beyond that.
 Upgrade to the official, version-matched Checkmk agent + TLS controller
 (verified against Checkmk Raw 2.3).
 
 **Bake it into the image (production default).** Pass your site's agent `.deb`
-URL at build time so `cmk-agent-ctl` ships in the image — no runtime download:
+URL at build time so `cmk-agent-ctl` ships in the image, with no runtime download:
 
 ```bash
 docker build -f runner-node/Dockerfile \
@@ -79,7 +79,7 @@ docker build -f runner-node/Dockerfile \
   -t synthmk-runner:$(cat VERSION) .
 ```
 
-Then register once (binds the per-site TLS cert — an image can't carry that) and
+Then register once (binds the per-site TLS cert, which an image can't carry) and
 restart in `official` mode:
 
 ```bash
@@ -93,7 +93,7 @@ docker exec -e CMK_PASSWORD=... synthmk-runner \
 ```
 
 The official agent serves the same spool dir natively, so scheduler output is
-unchanged — only the transport hardens. (In containers the entrypoint provides
+unchanged; only the transport hardens. (In containers the entrypoint provides
 the agent socket via socat, replacing systemd socket activation.)
 
 ## Scaling
@@ -107,7 +107,7 @@ stale rather than showing stale-but-green. Capacity formula, knobs, and measured
 
 Set `checkmk_host:` in a flow (or the 3rd column in `flows.conf`) and the result
 is wrapped in a Checkmk piggyback envelope, so the **monitored site appears as
-its own Checkmk host** carrying the synthetic service — instead of every check
+its own Checkmk host** carrying the synthetic service, instead of every check
 hanging off the runner node. Create those target hosts in Checkmk (no-IP /
 no-agent is fine) to receive the piggyback data.
 
@@ -116,7 +116,7 @@ no-agent is fine) to receive the piggyback data.
 On a failing step (with `screenshot_on_failure: true`) the runner saves a PNG
 and the service line links it via `SYNTHMK_SHOT_BASE_URL`, including the
 per-file access token. The link only renders if **"Escape HTML codes in service
-output"** is **Off** for the runner host — scope that rule to this host only
+output"** is **Off** for the runner host; scope that rule to this host only
 (escaping-off is an XSS surface, Werk #6058; SynthMK output is always a single
 sanitized line). **Credential flows:** screenshots taken after a
 `sensitive: true` fill blank all form fields before capture; values from the

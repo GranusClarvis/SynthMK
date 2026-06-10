@@ -2,28 +2,28 @@
 
 **Website & docs: https://granusclarvis.github.io/SynthMK-Web/ · Downloads: [GitHub Releases](https://github.com/GranusClarvis/SynthMK/releases)**
 
-Checkmk synthetic monitoring addon for browser journeys — record, build, or
+Checkmk synthetic monitoring addon for browser journeys: record, build, or
 script a flow; a hardened runner node executes it on schedule; the result is a
 normal Checkmk service with graphs, thresholds, and failure screenshots.
 
-**Four ways to author a check** (simplicity first — nobody is forced to code,
+**Four ways to author a check** (simplicity first: nobody is forced to code,
 nobody is capped by YAML either):
 
-1. **Record** — browser extension (Chrome/Edge/Firefox) records clicks/typing
+1. **Record**: browser extension (Chrome/Edge/Firefox) records clicks/typing
    into readable YAML; passwords become secret references automatically.
-2. **Import** — every Chrome has a recorder built in (F12 → Recorder); convert
+2. **Import**: every Chrome has a recorder built in (F12 → Recorder); convert
    its JSON export with `runner/import_devtools.py`. No extension needed.
-3. **Build visually** — the node dashboard's **step builder**: click elements
+3. **Build visually**: the node dashboard's **step builder**: click elements
    on a live page preview (Chrome-inspect style), pick the action, every step
    is tested live as you add it, export to the lint-gated editor.
-4. **Write** — readable YAML flows (with selector fallback ladders, sub-flow
+4. **Write**: readable YAML flows (with selector fallback ladders, sub-flow
    `include`, TOTP/MFA secrets), or full **Playwright Python script checks**
    for power users (trust-gated, off by default).
 
 ## Why SynthMK (vs Checkmk's own Synthetic Monitoring)
 
 Checkmk 2.3 ships an official **Synthetic Monitoring** add-on built on
-**Robotmk / Robot Framework** — powerful, enterprise-grade, and the right choice
+**Robotmk / Robot Framework**. It is powerful, enterprise-grade, and the right choice
 if you already live in Robot Framework or run a commercial Checkmk edition.
 
 SynthMK aims at the gap underneath it:
@@ -39,11 +39,11 @@ SynthMK aims at the gap underneath it:
 | Footprint | 4–8 cores / 8–16 GB per test host | one container + one MKP + one extension |
 
 If you run **Checkmk Raw** and want *"is my login flow still working?"* as a
-normal service — without Robot Framework or a paid tier — that's SynthMK.
+normal service (without Robot Framework or a paid tier), that's SynthMK.
 v0.5.0 adds the authoring & operations layer on top of the v0.3 hardening:
 selector fallback ladders, sub-flows, TOTP/MFA, the visual step builder, the
 DevTools importer, script checks, and dashboard management (pause/tags/
-history/audit/viewer role) — all contract- and e2e-tested. Test evidence:
+history/audit/viewer role), all contract- and e2e-tested. Test evidence:
 [`docs/STATUS.md`](docs/STATUS.md) · capacity math: [`docs/scaling.md`](docs/scaling.md)
 · how we compare: [`docs/competitive-landscape.md`](docs/competitive-landscape.md).
 
@@ -82,7 +82,7 @@ See [`docs/home-lab.md`](docs/home-lab.md) for the full Checkmk wiring walkthrou
 Host **one runner node** inside the intranet range; it reaches internal-only
 sites, runs many flows on their own intervals, serves failure screenshots, and
 reports to Checkmk like any host. To try the whole thing end-to-end on one
-machine — self-hosted Checkmk Raw + the runner + an internal demo site:
+machine (self-hosted Checkmk Raw + the runner + an internal demo site):
 
 ```bash
 cd lab && docker compose up -d --build      # Checkmk UI: http://localhost:8080/cmk/
@@ -107,7 +107,7 @@ make real-mkp-ci         # ephemeral Checkmk: build + `mkp add`/`enable` the .mk
 
 `make package` builds the byte-deterministic skeleton (for CI). `make real-mkp`
 produces the genuine Checkmk-Exchange-installable `.mkp` (info + info.json +
-member tarballs) using the lab Checkmk container — bring it up first
+member tarballs) using the lab Checkmk container; bring it up first
 (`cd lab && docker compose up -d checkmk`). Verified against Checkmk Raw 2.3.
 
 `make ci` is the single browser/Docker-free contract GitHub Actions and
@@ -130,7 +130,7 @@ GOAT is a reference point, not the final architecture. Useful concepts include
 its Chrome recorder event capture, selector generation, recorded step model, and
 Playwright runner behavior. SynthMK keeps the Checkmk user flow as the center of
 gravity. SynthMK adopts a remote **runner-node appliance** (the "run checks from
-inside the intranet" idea) but Checkmk-native — agent + spool dir + piggyback —
+inside the intranet" idea) but Checkmk-native (agent + spool dir + piggyback),
 explicitly rejecting GOAT's central admin-suite coordinator. See
 [`docs/architecture.md`](docs/architecture.md) and
 [`docs/goat-reference-audit.md`](docs/goat-reference-audit.md).

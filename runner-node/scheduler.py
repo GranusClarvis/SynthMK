@@ -260,11 +260,11 @@ def emit_scheduler_health(flows: list[Flow], pool: "Pool", now: float) -> None:
     if overdue:
         state = 1
         names = ", ".join(f.file for f in overdue[:3])
-        detail = (f"{len(overdue)} flow(s) overdue ({names}…) — raise "
+        detail = (f"{len(overdue)} flow(s) overdue ({names}…): raise "
                   f"SYNTHMK_MAX_CONCURRENCY or intervals")
     elif behind:
         state = 1
-        detail = behind + " — raise SYNTHMK_MAX_CONCURRENCY or intervals"
+        detail = behind + ": raise SYNTHMK_MAX_CONCURRENCY or intervals"
     publish("120_synthmk_scheduler",
             synthetic_line(
                 SCHED_SERVICE, state,

@@ -164,7 +164,7 @@ def convert(recording: dict) -> tuple[dict, list[str]]:
 def to_yaml(flow: dict) -> str:
     header = (
         "# Imported from a Chrome DevTools Recorder recording by\n"
-        "# runner/import_devtools.py. Selector lists are fallback ladders —\n"
+        "# runner/import_devtools.py. Selector lists are fallback ladders;\n"
         "# candidates are tried in order. Review, add assertions (check_*),\n"
         "# set warn_ms/crit_ms, then schedule it in flows.conf.\n"
     )

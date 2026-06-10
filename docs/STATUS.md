@@ -1,10 +1,33 @@
-# SynthMK — Status, Test Evidence, Open Work & Security
+# SynthMK: Status, Test Evidence, Open Work & Security
 
-**As of:** 2026-06-10 · **Version:** 0.5.0 · **Branch:** `main`
+**As of:** 2026-06-10 · **Version:** 0.6.0 · **Branch:** `main`
 **Repo:** `git@github.com:GranusClarvis/SynthMK.git` ·
 **Website:** https://granusclarvis.github.io/SynthMK-Web/
 
-## -1. What was done in v0.5.0 (authoring & operations) — evidence 2026-06-10
+## -2. What was done in v0.6.0 (verified end to end + hardening), evidence 2026-06-10
+
+The whole product was exercised LIVE against a full lab stack (Checkmk Raw
+2.3 + runner node + demo site), all on the freshly built 0.6.0 image:
+
+| Proof | Result |
+|---|---|
+| 15 concurrent distinct-shape checks, 40+ min soak | **15/15 green**, verified in the spool, at the agent, AND as discovered Checkmk services on 3 hosts. Shapes: Checkmk-UI login journey (piggybacked to host `cmk`), example.com to IANA + Wikipedia public journeys, chromium/firefox/webkit engines, script flow, TOTP entry, ladders + shared include, checkbox/attribute forms, per-run unique values, negative text, evidence capture |
+| Recorder e2e (extension) | `extension/test_e2e.py` green in the runner image |
+| DevTools import e2e | `runner/test_import_e2e.py`: recording JSON -> import CLI -> REAL browser run passes; recorded password plaintext discarded |
+| Step builder UI e2e | `runner-node/test_dashboard_e2e.py` 21/21, CSP-safe |
+| Scheduler stress | 150 flows sustained + deliberate overload, 8/8 |
+| Real-browser scale | 60 flows / 240s soak: 60/60 fresh OK, 0 overdue, agent poll 559ms, container 0.32% CPU / 21 MiB between runs |
+| Real-MKP install proof | `scripts/ci_real_mkp.sh`: 0.6.0 artifact `mkp add` + `mkp enable` on an EPHEMERAL Checkmk site, payload listed |
+| Contract suites | runner 128, importer 25, admin HTTP 34 (incl. TLS, CSP, lockout, import endpoint), all in `make validate` |
+
+Hardening added in 0.6.0: `max_attempts` retries (UNKNOWN never retried),
+dashboard HTTPS (`SYNTHMK_ADMIN_TLS_CERT/KEY`), failed-login lockout
+(5 fails -> 60s, audited), CSP + X-Frame-Options, dashboard
+"Import recording" upload, builder `bypass_csp` (authoring only; monitoring
+pages keep the site's real policy). Service output and docs carry no em
+dashes (operator request: copy must not look generated).
+
+## -1. What was done in v0.5.0 (authoring & operations), evidence 2026-06-10
 
 Authoring (four paths, see CHANGELOG for detail): selector fallback ladders,
 visual **step builder** on the dashboard (live page preview, click-to-pick,
@@ -23,7 +46,7 @@ rollback, JSONL audit trail, read-only viewer token, multi-node special agent.
 | DevTools importer (`runner/test_import_devtools.py`) | 25 | `make validate` |
 | Dashboard HTTP contract (`runner-node/test_admin_contract.py`) | 26 | `make validate`, real server on loopback |
 | Dashboard **UI e2e** (`runner-node/test_dashboard_e2e.py`) | 21 | real Chromium in the runner image: sign-in → builder point-and-click → tested steps → failing step rejected → export → lint & save → table → pause |
-| Special agent (`checkmk/special/test_agent_synthmk.py`) | — | two fake nodes → one host |
+| Special agent (`checkmk/special/test_agent_synthmk.py`) | n/a | two fake nodes → one host |
 | Scheduler **stress** (`runner-node/stress_test.py`) | 8 | 150 flows sustained (4× the documented envelope), hot-reload + run-now under load, overload phase must alarm |
 | Full CI (`scripts/ci.sh`) | all gates | validate + syntax + determinism + payload + secret scan + versions |
 
@@ -50,7 +73,7 @@ a 5-minute window; WARN below 80%) so saturation is loud, not silent.
 - **Recorder packages** for Chrome/Edge + Firefox with icons (`extension/build.sh`);
   real-browser E2E re-verified after the manifest changes.
 - **Screenshot links LAN fix**: `make lab-up` defaults the base URL to the
-  host's LAN IP — links in Checkmk now work from other machines.
+  host's LAN IP, so links in Checkmk now work from other machines.
 - **Website**: SynthMK-Web repo on GitHub Pages, real lab screenshots.
 - v0.3.0 tagged + released on GitHub with MKP + extension assets.
 
@@ -103,7 +126,7 @@ All verified 2026-06-09 against **Checkmk Raw 2.3.0p48** in the LAN lab:
 
 | Test | Result |
 |---|---|
-| `make ci` (browser/Docker-free contract) | ✅ green — see CI section in repo |
+| `make ci` (browser/Docker-free contract) | ✅ green; see CI section in repo |
 | Contract suite (`runner/test_contract.py`) | ✅ 55 checks: line format, per-step perfdata, secret load/refusal/redaction, lint lockstep for all 14 actions, optional steps |
 | 10-step lab login journey (secrets, hover, select, count) | ✅ OK in 406 ms standalone; ✅ live OK as `Synthetic Portal Login` on piggyback host `intranet-demo` |
 | Live CRIT → recovery cycle through Checkmk | ✅ broke the dashboard → `state=2`, message **redacted** (`'Signed in as ***'`), tokenized screenshot link in plugin output → restored → back to OK |
@@ -114,7 +137,7 @@ All verified 2026-06-09 against **Checkmk Raw 2.3.0p48** in the LAN lab:
 | **TLS agent transport** | ✅ `register_agent.sh` against the lab site (version-matched .deb download → install → register), `cmk-agent-ctl status` = pull-agent with site-CA cert, `cmk -d` over TLS returns spool sections incl. tokenized screenshot links |
 | **Scale: 60 flows on one default node** | ✅ 5-min soak: 60/60 fresh OK, 0 stale/overdue/overlap-skips, ≈37 runs/min sustained (matches formula), slowest run 0.6 s, agent poll < 0.5 s, CPU 12–25 % of 4-core budget |
 | Recorder real-browser E2E | ✅ extension loaded in Chromium, recorded the login journey: password → `{{ secret.password }}`+sensitive (typed value nowhere), Enter → press, select → select_option, popup list renders, export lints clean |
-| Public internet journey | ✅ Wikipedia search flow live OK (807 ms, 7 steps). Google/DuckDuckGo: bot-blocked (reCAPTCHA / duck-CAPTCHA) from datacenter IP — documented as expected in `flows/google-search.yaml` |
+| Public internet journey | ✅ Wikipedia search flow live OK (807 ms, 7 steps). Google/DuckDuckGo: bot-blocked (reCAPTCHA / duck-CAPTCHA) from datacenter IP; documented as expected in `flows/google-search.yaml` |
 | Real `.mkp` | ✅ rebuilt + installed for 0.3.0 (see §6 evidence note) |
 
 ### Not yet tested / assumptions
@@ -133,7 +156,7 @@ All verified 2026-06-09 against **Checkmk Raw 2.3.0p48** in the LAN lab:
 |---|---|---|
 | P2 | `SYNTHMK_MULTINODE_SPECIAL_AGENT` | Multi-node "locations": special agent pulling several runner nodes from the Checkmk side. |
 | P2 | `SYNTHMK_REAL_MKP_CI` | Docker-gated CI job that builds + installs the real `.mkp` against an ephemeral Checkmk container. |
-| P3 | `SYNTHMK_CERT_AND_LINKS_CHECKS` | Cert-expiry + broken-links check types (cheap, loved — New Relic lesson). |
+| P3 | `SYNTHMK_CERT_AND_LINKS_CHECKS` | Cert-expiry + broken-links check types (cheap, loved; the New Relic lesson). |
 | P3 | `SYNTHMK_TRACE_ARTIFACTS` | Playwright trace.zip on failure, served next to screenshots. |
 | P3 | `SYNTHMK_MAX_ATTEMPTS` | Retry-before-CRIT with visible attempt count. |
 | P3 | `SYNTHMK_FLOW_GROUPS` | Serialized flow groups + lint-time interval math. |
@@ -145,7 +168,7 @@ All verified 2026-06-09 against **Checkmk Raw 2.3.0p48** in the LAN lab:
 v0.2's must-fix set is closed: **#1** screenshots after sensitive fills are
 masked + values redacted; **#2** screenshot server requires per-file HMAC
 tokens, no listing/traversal; **#3** TLS agent transport available and
-verified (socat stays as the explicitly-labelled lab fallback — firewall 6556
+verified (socat stays as the explicitly-labelled lab fallback; firewall 6556
 to the Checkmk server if you use it); **#4** secrets in a permission-checked
 0600 file with global output redaction (env `{{ }}` remains for non-secrets);
 **#6** shipped compose carries mem/cpu limits + no-new-privileges; **#7**
@@ -156,8 +179,8 @@ Residual / operator duties:
 | # | Severity | Item | Status |
 |---|---|---|---|
 | 1 | Medium | Chromium runs `--no-sandbox` inside the container (standard for Docker; privilege-dropped to pwuser). Point flows only at trusted sites; keep the image updated. | Accepted, documented |
-| 2 | Medium | "Escape HTML codes in service output" must be Off for screenshot links — scope that rule to runner host(s) only (Werk #6058 XSS surface). | Documented, operator must scope |
-| 3 | Low | socat lab transport is plaintext — lab/firewalled use only; production = `SYNTHMK_AGENT_MODE=official`. | Documented |
+| 2 | Medium | "Escape HTML codes in service output" must be Off for screenshot links; scope that rule to runner host(s) only (Werk #6058 XSS surface). | Documented, operator must scope |
+| 3 | Low | socat lab transport is plaintext: lab/firewalled use only; production = `SYNTHMK_AGENT_MODE=official`. | Documented |
 | 4 | Low | Lab hardcodes `synthmk-lab-admin` + lab-only demo credentials in-repo. Never reuse outside the lab. | Documented |
 | 5 | Low | Supply chain: base image pinned by version, not digest; review MKP contents before distributing. | Partial |
 
@@ -167,7 +190,7 @@ Residual / operator duties:
 
 - **Clean lab cycle:** `make lab-down && make lab-up`. Don't bring the lab up
   mid-git-rewrite (stale bind mounts). Services are discoverable immediately
-  now (warmup lines) — the old "discover only after first run" gotcha is gone.
+  now (warmup lines); the old "discover only after first run" gotcha is gone.
 - **Secrets in the appliance:** mount your 600-mode file and set
   `SYNTHMK_SECRETS_FILE`; the entrypoint stages a runner-owned copy so host
   uid/ownership doesn't matter.
@@ -179,4 +202,4 @@ Residual / operator duties:
 - **Real MKP** needs a running site: `make lab-up` then `make real-mkp`.
   Enabled package removal needs `mkp disable` before `mkp remove`.
 - **Scale:** `bash scripts/scale_test.sh 60 300` reproduces the measured run;
-  watch the `SynthMK Scheduler` service — overdue flows WARN on the node.
+  watch the `SynthMK Scheduler` service: overdue flows WARN on the node.

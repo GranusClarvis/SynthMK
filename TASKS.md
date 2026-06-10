@@ -92,16 +92,65 @@ Source of truth for autonomous scheduling is Clarvis
 - [x] `[SYNTHMK_WEBSITE]` SynthMK-Web repo, GitHub Pages, real lab screenshots.
 - [x] `[SYNTHMK_RELEASES]` v0.3.0 + v0.4.0 tagged and released with assets.
 
-### Open (v0.5 candidates — see docs/competitive-landscape.md roadmap)
+## v0.5.0 — authoring & operations (released 2026-06-10)
 
-- [ ] `[SYNTHMK_MULTINODE_SPECIAL_AGENT]` special agent pulling several runner
-      nodes ("locations") from the Checkmk side.
-- [ ] `[SYNTHMK_REAL_MKP_CI]` Docker-gated CI job building + installing the real
-      .mkp against an ephemeral Checkmk container.
+- [x] `[SYNTHMK_SELECTOR_LADDERS]` [VERIFIED] selector fallback lists everywhere;
+      recorder/importer/builder emit them. → `runner/runner.py`, contract suite.
+- [x] `[SYNTHMK_STEP_BUILDER]` [VERIFIED live] point-and-click authoring on the
+      node dashboard; every added step executes on the live page. →
+      `runner-node/builder_session.py`, `/api/builder/*`, 21-check UI e2e.
+- [x] `[SYNTHMK_DEVTOOLS_IMPORT]` [VERIFIED live] Chrome DevTools Recorder JSON
+      import (CLI + dashboard upload); passwords discarded -> secret refs. →
+      `runner/import_devtools.py`, `runner/test_import_e2e.py`.
+- [x] `[SYNTHMK_SCRIPT_FLOWS]` [VERIFIED live] trust-gated Playwright Python
+      checks (`run(page, api)`, SYNTHMK_ALLOW_SCRIPTS=1).
+- [x] `[SYNTHMK_SUBFLOWS_TOTP_VARS]` include fragments, {{ totp.* }}, {{ var.* }},
+      3 new assertions. All in the 15-flow live lab soak.
+- [x] `[SYNTHMK_OPS_LAYER]` [VERIFIED] pause/resume, tags, version history +
+      rollback, audit JSONL, viewer role. → 34-check admin HTTP suite.
+- [x] `[SYNTHMK_MULTINODE_SPECIAL_AGENT]` special agent pulling several runner
+      nodes ("locations") from the Checkmk side. → `checkmk/special/`.
+- [x] `[SYNTHMK_THROUGHPUT_WATCHDOG]` saturation alarms even when fair
+      round-robin hides per-flow lag. → scheduler self-service, stress test.
+
+## v0.6.0 — verified end to end, enterprise hardening (this release)
+
+- [x] `[SYNTHMK_MAX_ATTEMPTS]` [VERIFIED] retry-before-CRIT (1..3, capped,
+      UNKNOWN never retried, attempts visible). → `runner.run_with_retries`.
+- [x] `[SYNTHMK_REAL_MKP_CI]` Docker-gated CI job building + installing the
+      real .mkp against an ephemeral Checkmk container. → `make real-mkp-ci`,
+      `scripts/ci_real_mkp.sh`, `.github/workflows/real-mkp.yml`.
+- [x] `[SYNTHMK_DASHBOARD_TLS_THROTTLE_CSP]` [VERIFIED] optional HTTPS for the
+      dashboard, failed-login lockout, CSP + X-Frame-Options.
+- [x] `[SYNTHMK_DASHBOARD_IMPORT]` [VERIFIED] "Import recording" upload on the
+      dashboard -> `/api/import/devtools` -> lint-gated editor.
+- [x] `[SYNTHMK_15FLOW_LIVE_SOAK]` [VERIFIED live] 15 concurrent distinct-shape
+      checks green in Checkmk: Checkmk-UI login (piggybacked to host `cmk`),
+      public journeys (example.com->IANA, Wikipedia), chromium/firefox/webkit,
+      script flow, TOTP, ladders+include, forms, evidence. → `lab/flows/`.
+- [x] `[SYNTHMK_RECORDER_E2E_TRIAD]` [VERIFIED live] all three authoring paths
+      e2e in the runner image: extension (`extension/test_e2e.py`), DevTools
+      import -> real run (`runner/test_import_e2e.py`), step builder UI
+      (`runner-node/test_dashboard_e2e.py`, CSP-safe).
+- [x] `[SYNTHMK_BUILDER_CSP_BYPASS]` builder authoring page sets bypass_csp so
+      element picking works on CSP-strict sites (monitoring runs unaffected).
+
+### Open (v0.7 candidates)
+
 - [ ] `[SYNTHMK_CERT_AND_LINKS_CHECKS]` cert-expiry + broken-links check types.
 - [ ] `[SYNTHMK_TRACE_ARTIFACTS]` Playwright trace.zip on failure next to PNGs.
-- [ ] `[SYNTHMK_MAX_ATTEMPTS]` retry-before-CRIT with visible attempt count.
 - [ ] `[SYNTHMK_FLOW_GROUPS]` serialized groups + lint-time interval math.
+- [ ] `[SYNTHMK_STORE_LISTINGS]` Chrome Web Store / AMO recorder listings
+      (removes the developer-mode install step).
+- [ ] `[SYNTHMK_AI_SCAFFOLD]` "describe the journey in English -> draft YAML"
+      authoring assist (Checkly-style; authoring only, never the hot path).
+- [ ] `[SYNTHMK_NODE_METRICS]` Prometheus /metrics on the node (runs, queue
+      depth, browser RSS) for fleets that watch nodes outside Checkmk.
+- [ ] `[SYNTHMK_SECRETS_BACKENDS]` optional Vault/SOPS secret sources behind
+      the same {{ secret.* }} interface.
+- [ ] `[SYNTHMK_HA_NODE_PAIR]` active/passive node pairing so one node's
+      death does not blind the synthetic layer (special agent already
+      tolerates a dead node loudly).
 
 ## First Acceptance Target
 

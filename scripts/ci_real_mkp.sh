@@ -28,7 +28,7 @@ VERSION="$(cat "$REPO/VERSION")"
 NAME="synthmk"
 
 CMK_IMAGE="${CMK_IMAGE:-checkmk/check-mk-raw:2.3.0-latest}"
-CMK_CONTAINER="${CMK_CONTAINER:-cmk}"
+CMK_CONTAINER="${CMK_CONTAINER:-synthmk-ci-cmk}"
 # Site id is independent of the container name (Checkmk site ids forbid hyphens
 # and cap at 16 chars, so they can't always equal a Docker name). Mirrors the
 # CMK_SITE/CMK_CONTAINER split in make_real_mkp.sh.

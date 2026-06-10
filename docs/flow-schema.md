@@ -15,17 +15,17 @@ Playwright code.
 | `warn_ms` | int | no | Total-duration WARN threshold → Checkmk perfdata `;warn`. |
 | `crit_ms` | int | no | Total-duration CRIT threshold → Checkmk perfdata `;crit`. |
 | `browser` | string | no (`chrome`) | Target engine: `chromium`/`chrome`/`google-chrome` (bundled Chromium), `firefox`, `webkit`/`safari`, or `edge`/`msedge` (Edge release channel, falls back to bundled Chromium if absent). Unknown values fall back to Chromium. |
-| `screenshot_on_failure` | bool | no (false) | On a failing step, capture `screenshots/<flow>-fail-step<N>.png` and cite it in the output line (a clickable link when a screenshot base URL is configured — see below). |
+| `screenshot_on_failure` | bool | no (false) | On a failing step, capture `screenshots/<flow>-fail-step<N>.png` and cite it in the output line (a clickable link when a screenshot base URL is configured; see below). |
 | `state_mode` | string | no (`digit`) | `digit` = runner computes the state (authoritative failure message); `dynamic` = emit a `P` state on success and let Checkmk threshold `duration` from `warn_ms`/`crit_ms`. |
 | `checkmk_host` | string | no | Piggyback target: attribute the result to this Checkmk host (the monitored site appears as its own host) instead of the runner node. Consumed by the runner-node scheduler / `checkmk/piggyback_wrap.sh`, not `runner.py`. |
-| `type` | string | no (`flow`) | `flow` = declarative steps (this schema). `script` = operator Playwright Python — see **Script flows** below. |
+| `type` | string | no (`flow`) | `flow` = declarative steps (this schema). `script` = operator Playwright Python; see **Script flows** below. |
 | `script` | string | script flows | Path to the `.py`, relative to the flow file. |
 | `steps` | list | yes (flow type) | Ordered steps (below). |
 
 ## Selector fallback ladders
 
 Everywhere a step takes a `selector`, it accepts **either one selector or a
-list** — a fallback ladder tried in order until one matches:
+list**: a fallback ladder tried in order until one matches:
 
 ```yaml
 - action: click
@@ -63,7 +63,7 @@ Assertion steps (failure ends the flow CRIT with a clear message):
 | `action` | Fields | Failure message |
 |---|---|---|
 | `check_visible_text` | `text` | `Expected text '<text>' not found` |
-| `check_text_absent` | `text` | `Text '<text>' is visible on the page (expected absent)` — assert error banners are NOT there. |
+| `check_text_absent` | `text` | `Text '<text>' is visible on the page (expected absent)`. Use it to assert error banners are NOT there. |
 | `check_title` | `contains` | `Expected title to contain '<x>', got '<actual>'` |
 | `check_url` | `contains` | `Expected URL to contain '<x>', got '<actual>'` |
 | `check_element_count` | `selector`, `min?` (1) | `Expected at least <min> element(s) matching '<sel>', found <n>` |
@@ -83,27 +83,27 @@ of failing the flow. Use it for best-effort interactions like cookie-consent
 clicks (see [`flows/google-search.yaml`](../flows/google-search.yaml)).
 
 A raw Playwright failure on a step (click timeout, bad selector) is reported as
-`CRIT - Step <N> (<action>) failed: <first error line>` — a check failure, not a
-runner error — and still triggers the failure screenshot.
+`CRIT - Step <N> (<action>) failed: <first error line>` (a check failure, not a
+runner error) and still triggers the failure screenshot.
 
 ## Value substitution & secrets
 
 Two placeholder forms are resolved in `url`/`value` fields at run time:
 
-* **`{{ secret.NAME }}` — the right way to do credentials.** Resolved from the
+* **`{{ secret.NAME }}`: the right way to do credentials.** Resolved from the
   node-local **secrets file** (`--secrets-file` / `$SYNTHMK_SECRETS_FILE`), a
-  YAML mapping that MUST be `chmod 600` and owned by the runner user — anything
+  YAML mapping that MUST be `chmod 600` and owned by the runner user; anything
   looser is refused up front (UNKNOWN, flow never runs with blank creds).
   A missing name is a hard UNKNOWN with no value leaked. Every resolved secret
   value is **redacted to `***` in all service output and error messages**.
-* **`{{ totp.NAME }}` — MFA logins.** NAME is a **base32 TOTP seed** stored in
+* **`{{ totp.NAME }}`: MFA logins.** NAME is a **base32 TOTP seed** stored in
   the same secrets file (the string you get from "can't scan the QR code?").
   Resolves to the current 6-digit RFC 6238 code at run time, so SynthMK can
   monitor MFA-protected logins. The seed is redacted like any secret.
-* **`{{ var.uuid }}` / `{{ var.timestamp }}` / `{{ var.random }}`** — builtin
+* **`{{ var.uuid }}` / `{{ var.timestamp }}` / `{{ var.random }}`**: builtin
   per-run values, stable within one run: type `ticket-{{ var.uuid }}` into a
   form, then assert the same uuid is echoed back.
-* `{{ NAME }}` — legacy environment lookup (unknown → empty string). Fine for
+* `{{ NAME }}`: legacy environment lookup (unknown → empty string). Fine for
   non-secrets like base URLs.
 
 Mark credential fills `sensitive: true`: the value is registered for redaction
@@ -168,7 +168,7 @@ server (`runner-node/shot_server.py`): per-file HMAC tokens signed with a
 node-local key (`$SYNTHMK_SHOT_KEY_FILE`), no directory listing, no traversal.
 The runner appends the matching `?t=` token automatically when the key file is
 readable. The link only renders in the Checkmk GUI if **"Escape HTML codes
-in service output"** is turned **Off** for the runner host (scope it narrowly —
+in service output"** is turned **Off** for the runner host (scope it narrowly:
 escaping-off is an XSS surface; SynthMK's output is always a single sanitized
 line). Without a base URL the line keeps the plain `(screenshot: <path>)` form.
 
@@ -177,7 +177,7 @@ line). Without a base URL the line keeps the plain `(screenshot: <path>)` form.
 By default a flow becomes a service of the runner node. Set `checkmk_host:` and
 the runner-node scheduler wraps the result in a Checkmk piggyback envelope
 (`checkmk/piggyback_wrap.sh`) so the **monitored site appears as its own Checkmk
-host** carrying the synthetic service — one runner, many target hosts.
+host** carrying the synthetic service: one runner, many target hosts.
 
 ## Script flows (`type: script`)
 
@@ -194,7 +194,7 @@ screenshot_on_failure: true
 ```
 
 The script defines `run(page, api)`: `page` is the raw Playwright sync Page,
-`api` adds the monitoring contract — `api.step("label")` (named per-step
+`api` adds the monitoring contract: `api.step("label")` (named per-step
 timing graphed in Checkmk + failure attribution), `api.secret("name")`
 (secrets-file value, auto-redacted + screenshot-masked), `api.totp("name")`,
 `api.var("uuid")`, `api.screenshot("name")`, `api.fail("message")`. A bare
@@ -210,7 +210,7 @@ can write the flows volume may run code as the runner user.
 ## Importing Chrome DevTools recordings
 
 Every Chrome ships a recorder (F12 → Recorder). Export the recording as JSON
-and convert it — no extension installed on the recording machine:
+and convert it, with no extension installed on the recording machine:
 
 ```bash
 python3 runner/import_devtools.py recording.json -o flows/my-check.yaml
@@ -232,25 +232,25 @@ then export to the lint-gated editor. Passwords default to secret references.
 
 ## Examples
 
-- [`flows/example-ok.yaml`](../flows/example-ok.yaml) — passing journey.
-- [`flows/example-fail.yaml`](../flows/example-fail.yaml) — failing assertion (`Dashboard` text absent → CRIT).
-- [`flows/wikipedia-search.yaml`](../flows/wikipedia-search.yaml) — real multi-step
+- [`flows/example-ok.yaml`](../flows/example-ok.yaml): passing journey.
+- [`flows/example-fail.yaml`](../flows/example-fail.yaml): failing assertion (`Dashboard` text absent → CRIT).
+- [`flows/wikipedia-search.yaml`](../flows/wikipedia-search.yaml): real multi-step
   public journey (fill → press Enter → wait_for_url → asserts), verified live.
-- [`flows/google-search.yaml`](../flows/google-search.yaml) — search-engine journey
+- [`flows/google-search.yaml`](../flows/google-search.yaml): search-engine journey
   *template* incl. `optional: true` consent click; see its header for why Google
   bot-blocks headless runners (use the shape on sites you own).
-- [`lab/flows/intranet-login.yaml`](../lab/flows/intranet-login.yaml) — the
+- [`lab/flows/intranet-login.yaml`](../lab/flows/intranet-login.yaml): the
   flagship 10-step login journey: secrets file, sensitive fill, wait_for_url,
   hover menu, select_option, element count. Runs E2E in the LAN lab.
-- [`flows/example-advanced.yaml`](../flows/example-advanced.yaml) — v0.5
+- [`flows/example-advanced.yaml`](../flows/example-advanced.yaml): v0.5
   feature tour: selector ladders, `include`, `{{ totp.* }}`, `{{ var.* }}`,
   the new assertions (template, fictional portal).
-- [`flows/shared/portal-login.yaml`](../flows/shared/portal-login.yaml) —
+- [`flows/shared/portal-login.yaml`](../flows/shared/portal-login.yaml):
   reusable login fragment for `include`.
 - [`flows/example-script.yaml`](../flows/example-script.yaml) +
-  [`flows/scripts/example_journey.py`](../flows/scripts/example_journey.py) —
+  [`flows/scripts/example_journey.py`](../flows/scripts/example_journey.py):
   script flow template.
-- [`flows/demo/index.html`](../flows/demo/index.html) — bundled stable local target page.
+- [`flows/demo/index.html`](../flows/demo/index.html): bundled stable local target page.
 
 ## Recorder
 
@@ -262,7 +262,7 @@ insert assertions, set name + thresholds) → **Download .yaml** → drop in
 `flows/` + one `flows.conf` line.
 
 Credential hygiene is built in: typing into a password field records
-`{{ secret.<field> }}` + `sensitive: true` — **the typed value never leaves the
+`{{ secret.<field> }}` + `sensitive: true`, so **the typed value never leaves the
 page**; the popup tells you to add the real value to the node's secrets file.
 Enter keypresses are recorded as `press`, `<select>` changes as `select_option`.
 

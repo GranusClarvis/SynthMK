@@ -4,6 +4,60 @@ All notable changes to SynthMK are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); SynthMK uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-06-10
+
+The verification and hardening release: everything proven live against a full
+Checkmk stack, plus the operational features an enterprise rollout asks for
+first.
+
+### Verified end to end (all live on the lab stack, 2026-06-10)
+- **15 concurrent checks of distinct shapes, all green in Checkmk itself**:
+  a journey that logs into the Checkmk web UI (piggybacked to the `cmk`
+  host), public journeys that tolerate headless runners (example.com to
+  IANA, Wikipedia search), Chromium, Firefox and WebKit engines, the script
+  flow, TOTP entry, selector ladders + shared include fragment, checkbox and
+  attribute assertions, per-run unique values, negative text assertions and
+  always-on evidence capture. Verified at the spool, at the agent, and as
+  discovered services on three Checkmk hosts. New lab pages and flows ship
+  in `lab/`.
+- **All three authoring paths e2e in the runner image**: recorder extension
+  (`extension/test_e2e.py`), DevTools recording import then a REAL browser
+  run of the imported flow (`runner/test_import_e2e.py`, proves the recorded
+  password plaintext is discarded and the flow passes), and the step builder
+  UI (`runner-node/test_dashboard_e2e.py`, 21 checks, now CSP-safe).
+- Scheduler stress re-run on this release: 150 flows sustained plus the
+  deliberate-overload phase, 8/8.
+- Real-browser scale test re-run at 60 flows on the new image.
+
+### Added
+- **`max_attempts` (1..3)**: a CRIT/WARN outcome re-runs with a fresh
+  browser before the service alarms; UNKNOWN (operator error) never
+  retries; the attempt count is visible in the summary, so a flapping check
+  looks flapping. Lint-validated.
+- **Dashboard HTTPS**: set `SYNTHMK_ADMIN_TLS_CERT`/`SYNTHMK_ADMIN_TLS_KEY`
+  (PEM) and the dashboard serves TLS 1.2+ with a Secure session cookie.
+- **Failed-login lockout**: five bad sign-ins from one address lock
+  `/api/login` for 60 seconds (tunable); attempts and lockouts are audited.
+- **Content-Security-Policy** and `X-Frame-Options: DENY` on all dashboard
+  HTML. This also exposed a real builder limitation: element inspection ran
+  in the page main world, where a strict target-site CSP could veto it. The
+  builder's authoring page now sets `bypass_csp`; scheduled monitoring runs
+  keep a normal page so checks observe real site behavior.
+- **Import recording button** on the dashboard: upload a DevTools Recorder
+  JSON, the converted flow opens in the lint-gated editor with the
+  importer's notes shown.
+- **Ephemeral real-MKP CI** (`make real-mkp-ci`, `scripts/ci_real_mkp.sh`,
+  optional GitHub workflow): builds the real .mkp against a throwaway
+  Checkmk Raw container and proves `mkp add` + `mkp enable` succeed.
+
+### Changed
+- Service summaries, lint messages and dashboard strings no longer use em
+  dashes (the website was rewritten the same way).
+- Lab schedule now carries 15 flows with tags; demo site gained a settings
+  page (checkboxes, select, MFA field) for live form-assertion coverage.
+- Contract suites: runner 120 to 128 checks, admin HTTP 26 to 34 (import
+  endpoint, CSP headers, lockout, TLS).
+
 ## [0.5.0] - 2026-06-10
 
 The authoring & operations release: four ways to create a check (record /

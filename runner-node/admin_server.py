@@ -416,7 +416,7 @@ class BuilderSession:
             if self._proc is None:
                 if payload.get("cmd") != "start":
                     return {"ok": False,
-                            "error": "no active builder session — open a page first"}
+                            "error": "no active builder session; open a page first"}
                 try:
                     self._spawn_locked()
                 except Exception as exc:
@@ -431,12 +431,12 @@ class BuilderSession:
                 return {"ok": False, "error": f"builder session died: {exc}"}
             if line is None:
                 self._stop_locked()
-                return {"ok": False, "error": "builder timed out — session was reset"}
+                return {"ok": False, "error": "builder timed out; the session was reset"}
             try:
                 return json.loads(line)
             except json.JSONDecodeError:
                 self._stop_locked()
-                return {"ok": False, "error": "builder protocol error — session was reset"}
+                return {"ok": False, "error": "builder protocol error; the session was reset"}
 
     def stop(self) -> dict:
         with self._lock:
@@ -842,8 +842,8 @@ textarea{width:100%;height:300px;background:#020617;color:#cbd5e1;border:1px sol
     <div class="bpanel">
       <div class="bcard" id="belem">
         <h3>Element</h3>
-        <div class="bhint">Open a page, then click an element in the preview —
-        like Chrome inspect, but every click builds a monitored step.</div>
+        <div class="bhint">Open a page, then click an element in the preview.
+        Like Chrome inspect, but every click builds a monitored step.</div>
       </div>
       <div class="bcard">
         <h3>Page checks</h3>
@@ -863,8 +863,8 @@ textarea{width:100%;height:300px;background:#020617;color:#cbd5e1;border:1px sol
           <input id="bname" size="22" placeholder="Flow name" value="My Recorded Journey">
           <button class="primary" onclick="bExport()">Open in editor</button>
         </div>
-        <div class="bhint">Removing a step does not undo it in the live page —
-        use Replay steps to re-run the list from the start URL.</div>
+        <div class="bhint">Removing a step does not undo it in the live page.
+        Use Replay steps to re-run the list from the start URL.</div>
       </div>
     </div>
   </div>
@@ -1029,7 +1029,7 @@ function bShowShot(d){
   if(!d.png)return;
   const img=document.getElementById('bshot');
   img.src='data:image/png;base64,'+d.png;img.style.display='block';
-  document.getElementById('bpageurl').textContent=(d.title?d.title+' — ':'')+(d.url||'');
+  document.getElementById('bpageurl').textContent=(d.title?d.title+' · ':'')+(d.url||'');
 }
 async function bApi(path,body){
   const r=await fetch(path,{method:'POST',headers:hdrs(),body:JSON.stringify(body||{})});

@@ -155,7 +155,7 @@ def lint_flow(data: Any, *, source: str = "<flow>",
     # for it to be able to ever escalate — otherwise the service can only be OK.
     if str(state_mode).lower() == "dynamic" and crit_ms is None and warn_ms is None:
         warnings.append(
-            f"{source}: state_mode 'dynamic' without warn_ms/crit_ms — Checkmk "
+            f"{source}: state_mode 'dynamic' without warn_ms/crit_ms: Checkmk "
             f"has no threshold to escalate on (service will stay OK on success)"
         )
 
@@ -191,7 +191,7 @@ def lint_flow(data: Any, *, source: str = "<flow>",
         errors.append(f"{source}: 'steps' must be a list")
         return (errors, warnings)
     if not steps:
-        errors.append(f"{source}: 'steps' is empty — nothing to run")
+        errors.append(f"{source}: 'steps' is empty, nothing to run")
         return (errors, warnings)
 
     for i, step in enumerate(steps):
