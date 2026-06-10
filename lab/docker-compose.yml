@@ -69,12 +69,25 @@ services:
     # 6556 is intentionally NOT published — Checkmk reaches it over labnet by name.
     security_opt:
       - no-new-privileges:true
+      # Keep Docker's DEFAULT seccomp profile (never seccomp:unconfined).
+      # --no-sandbox Chromium does not need a relaxed profile.
+    cap_drop:
+      - ALL
+    cap_add:
+      # Only the caps the entrypoint's root -> pwuser drop needs (see
+      # runner-node/compose.yaml for the full rationale). NET_RAW is dropped.
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
     shm_size: 1g
     deploy:
       resources:
         limits:
           cpus: "4"
           memory: 6g
+          pids: 1024
     networks: [labnet]
     depends_on: [intranet-demo]
     restart: unless-stopped

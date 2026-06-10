@@ -4,6 +4,29 @@ All notable changes to SynthMK are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); SynthMK uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed (runner hardening)
+- **Capability floor on the runner container.** Both compose files (production
+  `runner-node/compose.yaml` and `lab/docker-compose.yml`) and the raw
+  `docker run` example now `cap_drop: ALL` and re-add only the five caps the
+  root→`pwuser` privilege drop requires (`CHOWN, DAC_OVERRIDE, FOWNER, SETUID,
+  SETGID`). `NET_RAW` is gone, so a hostile flow target cannot make the node
+  craft raw packets to port-scan the internal range (verified: `SOCK_RAW`
+  creation returns `EPERM` under the new cap set on `synthmk-runner:0.7.0`).
+- **Seccomp posture documented.** Docker's default seccomp profile is retained
+  (never `seccomp:unconfined`); `--no-sandbox` Chromium does not need a relaxed
+  profile, unlike Chromium's own sandbox.
+- **PID limit** (`deploy.resources.limits.pids: 1024` / `--pids-limit 1024`) as
+  a fork-bomb ceiling for the browser pool, alongside the existing cpu/memory caps.
+
+### Docs
+- **Trust boundary section** in `runner-node/README.md`: `flows/` + `flows.conf`
+  are operator-only inputs with no untrusted-submission path; a flow can reach
+  internal hosts (SSRF/scan) and run code as `pwuser` by design, so flow
+  authoring must never be exposed to untrusted users. Residual-risk table in
+  `docs/STATUS.md` updated to match.
+
 ## [0.7.0] - 2026-06-10
 
 New check types and artifacts, the extension store package, and a round of

@@ -53,6 +53,23 @@ services:
       - "9181:9181"     # management dashboard (token sign-in; operator LAN)
     security_opt:
       - no-new-privileges:true
+      # Keep Docker's DEFAULT seccomp profile — do NOT add `seccomp:unconfined`.
+      # Chromium runs with --no-sandbox in here, which (unlike Chromium's own
+      # sandbox) needs no relaxed seccomp, so the restrictive default stays on.
+    cap_drop:
+      - ALL
+    cap_add:
+      # Only what the entrypoint's root -> pwuser privilege drop requires;
+      # everything else (NET_RAW, NET_ADMIN, SYS_ADMIN, SYS_PTRACE, ...) is gone.
+      - CHOWN          # chown the mounted volumes + stage the secrets copy
+      - DAC_OVERRIDE   # write the runner-owned 0600 secrets/audit files
+      - FOWNER         # install(1) over a pre-owned bind-mounted file
+      - SETUID         # setpriv --reuid pwuser  (drop browser/HTTP to non-root)
+      - SETGID         # setpriv --regid pwuser --clear-groups
+    # No NET_RAW => the node cannot craft raw packets to port-scan the internal
+    # range, even if a (trusted, operator-authored) flow target turns hostile.
+    # Official-agent mode (cmk-agent-ctl) runs fine with this set: it only binds
+    # a unix socket and opens an outbound TLS connection, needing no extra caps.
     # Headless Chromium under --disable-dev-shm-usage still benefits from
     # a real /dev/shm at higher concurrency.
     shm_size: 1g
@@ -61,6 +78,7 @@ services:
         limits:
           cpus: "4"
           memory: 6g
+          pids: 1024   # fork-bomb ceiling for the browser pool (chromium+ff+webkit x4)
     restart: unless-stopped
 
 volumes:

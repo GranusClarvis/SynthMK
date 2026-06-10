@@ -204,7 +204,8 @@ Residual / operator duties:
 
 | # | Severity | Item | Status |
 |---|---|---|---|
-| 1 | Medium | Chromium runs `--no-sandbox` inside the container (standard for Docker; privilege-dropped to pwuser). Point flows only at trusted sites; keep the image updated. | Accepted, documented |
+| 1 | Medium | Chromium runs `--no-sandbox` inside the container (standard for Docker; privilege-dropped to pwuser). Compose now also drops all Linux caps except the 5 the root→pwuser drop needs (no `NET_RAW` ⇒ no raw-packet internal scan), retains Docker's default seccomp, and caps `cpus/memory/pids`. Point flows only at trusted sites; keep the image updated. | Accepted, hardened + documented |
+| 1b | Info | Trust boundary: `flows/` + `flows.conf` are operator-only inputs — no untrusted-flow-submission path. A flow can reach internal hosts (SSRF/scan) and run code as pwuser by design; never expose flow authoring to untrusted users. | Documented (runner-node/README.md §Trust boundary) |
 | 2 | Medium | "Escape HTML codes in service output" must be Off for screenshot links; scope that rule to runner host(s) only (Werk #6058 XSS surface). | Documented, operator must scope |
 | 3 | Low | socat lab transport is plaintext: lab/firewalled use only; production = `SYNTHMK_AGENT_MODE=official`. | Documented |
 | 4 | Low | Lab hardcodes `synthmk-lab-admin` + lab-only demo credentials in-repo. Never reuse outside the lab. | Documented |
