@@ -1,8 +1,37 @@
 # SynthMK — Status, Test Evidence, Open Work & Security
 
-**As of:** 2026-06-09 · **Version:** 0.4.0 · **Branch:** `main`
+**As of:** 2026-06-10 · **Version:** 0.5.0 · **Branch:** `main`
 **Repo:** `git@github.com:GranusClarvis/SynthMK.git` ·
 **Website:** https://granusclarvis.github.io/SynthMK-Web/
+
+## -1. What was done in v0.5.0 (authoring & operations) — evidence 2026-06-10
+
+Authoring (four paths, see CHANGELOG for detail): selector fallback ladders,
+visual **step builder** on the dashboard (live page preview, click-to-pick,
+every step executed live before it's added), **Chrome DevTools Recorder
+import** (no extension needed; recorded passwords discarded → secret refs),
+**script flows** (`run(page, api)`, trust-gated `SYNTHMK_ALLOW_SCRIPTS=1`),
+sub-flow `include`, `{{ totp.* }}` MFA, `{{ var.* }}` builtins, 3 new
+assertions. Operations: pause/resume, tags, version history + lint-gated
+rollback, JSONL audit trail, read-only viewer token, multi-node special agent.
+
+**Test evidence (all green 2026-06-10):**
+
+| Suite | Checks | How run |
+|---|---|---|
+| Runner contract (`runner/test_contract.py`) | 120 | `make validate`, browser-free |
+| DevTools importer (`runner/test_import_devtools.py`) | 25 | `make validate` |
+| Dashboard HTTP contract (`runner-node/test_admin_contract.py`) | 26 | `make validate`, real server on loopback |
+| Dashboard **UI e2e** (`runner-node/test_dashboard_e2e.py`) | 21 | real Chromium in the runner image: sign-in → builder point-and-click → tested steps → failing step rejected → export → lint & save → table → pause |
+| Special agent (`checkmk/special/test_agent_synthmk.py`) | — | two fake nodes → one host |
+| Scheduler **stress** (`runner-node/stress_test.py`) | 8 | 150 flows sustained (4× the documented envelope), hot-reload + run-now under load, overload phase must alarm |
+| Full CI (`scripts/ci.sh`) | all gates | validate + syntax + determinism + payload + secret scan + versions |
+
+**Stress finding worth knowing:** a saturated pool round-robins fairly, so no
+single flow ever trips the per-flow overdue alarm while every service quietly
+runs at a multiple of its configured interval. v0.5.0 adds a **throughput
+watchdog** to the scheduler self-service (achieved vs demanded runs/min over
+a 5-minute window; WARN below 80%) so saturation is loud, not silent.
 
 ## 0. What was done in v0.4.0 (native plugin, dashboard, browsers, website)
 

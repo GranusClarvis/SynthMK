@@ -63,3 +63,23 @@ thing that consumes pool slots — size with the formula above, and trust the
 `SynthMK Scheduler` service to WARN if you get it wrong.
 
 Reproduce with the LAN lab up: `bash scripts/scale_test.sh 60 300`.
+
+## v0.5.0: 150-flow stress + the throughput watchdog
+
+`runner-node/stress_test.py` drives the scheduler itself (browser stubbed via
+`SYNTHMK_RUNNER_CMD`) at 150 flows / 150 runs-per-minute sustained — hot
+reload and run-now exercised under load — then deliberately overloads it
+(150 runs/sec demanded). The overload run exposed a silent failure mode: a
+saturated pool **round-robins fairly**, so no single flow lags far enough to
+trip the per-flow overdue alarm while every flow quietly runs at a multiple
+of its configured interval (and its Checkmk service goes stale).
+
+The scheduler self-service therefore carries two independent alarms:
+
+1. **Overdue** — a specific flow is > max(interval, 60s) past schedule
+   (stuck/starved flow; names it).
+2. **Throughput watchdog** — achieved vs demanded runs/min over the last
+   5 minutes drops below 80% (saturation; reports both numbers). Needs 5
+   minutes of history, so node startup never false-alarms.
+
+Both WARN on the node, never on monitored applications.

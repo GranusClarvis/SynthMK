@@ -221,11 +221,38 @@ def run_flow(flow: Flow) -> None:
             flow.running = False
 
 
+# Throughput watchdog window. Per-flow overdue (below) catches a STUCK flow,
+# but a saturated pool degrades differently: it round-robins fairly, so every
+# flow runs — just at a multiple of its configured interval — and no single
+# flow ever lags enough to look overdue while every service quietly goes
+# stale in Checkmk. Comparing achieved vs demanded run RATE over this window
+# catches exactly that silent mode.
+RATE_WINDOW_S = 300
+_rate_hist: list[tuple[float, int]] = []
+
+
 def emit_scheduler_health(flows: list[Flow], pool: "Pool", now: float) -> None:
     overdue = [f for f in flows if not f.running and now - f.next_run > max(f.interval, 60)]
     total_runs = sum(f.runs for f in flows)
     total_skips = sum(f.overlaps_skipped for f in flows)
     slowest = max((f.last_duration for f in flows), default=0.0)
+
+    _rate_hist.append((now, total_runs))
+    while _rate_hist and now - _rate_hist[0][0] > RATE_WINDOW_S:
+        _rate_hist.pop(0)
+    behind = ""
+    demanded = sum(1.0 / f.interval for f in flows if f.interval > 0)
+    if len(_rate_hist) >= 2 and demanded > 0:
+        t0, r0 = _rate_hist[0]
+        span = now - t0
+        # Only judge once a full window of steady-state history exists
+        # (startup stagger legitimately under-achieves).
+        if span >= RATE_WINDOW_S * 0.9:
+            achieved = (total_runs - r0) / span
+            if achieved < 0.8 * demanded:
+                behind = (f"scheduling behind: achieving {achieved * 60:.0f} "
+                          f"of {demanded * 60:.0f} runs/min")
+
     # Oversubscription = flows can't run on schedule: that's a node-sizing
     # problem and must alert on the NODE, not as fake CRITs on monitored apps.
     state = 0
@@ -235,6 +262,9 @@ def emit_scheduler_health(flows: list[Flow], pool: "Pool", now: float) -> None:
         names = ", ".join(f.file for f in overdue[:3])
         detail = (f"{len(overdue)} flow(s) overdue ({names}…) — raise "
                   f"SYNTHMK_MAX_CONCURRENCY or intervals")
+    elif behind:
+        state = 1
+        detail = behind + " — raise SYNTHMK_MAX_CONCURRENCY or intervals"
     publish("120_synthmk_scheduler",
             synthetic_line(
                 SCHED_SERVICE, state,

@@ -152,20 +152,25 @@ def main() -> int:
                 f"f{i:03d}.yaml {OVERLOAD_INTERVAL_S}\n" for i in range(N_FLOWS)))
             # Overdue alarm needs >60s of sustained lag (max(interval, 60s)
             # grace) plus a 30s health-emit cycle — poll for up to 150s.
-            alarmed = False
-            for _ in range(30):
+            # Two distinct alarm paths: per-flow "overdue" (a stuck flow) and
+            # the throughput watchdog "scheduling behind" (saturated pool
+            # round-robining fairly — no flow individually overdue, every
+            # service silently late). Saturation manifests as the latter.
+            alarmed = ""
+            for _ in range(36):
                 time.sleep(5)
                 for f in spool.glob("*_synthmk_scheduler"):
                     for line in f.read_text().splitlines():
                         if line.strip().startswith("{"):
                             s = json.loads(line)
-                            m = re.search(r"(\d+) overdue", s.get("summary", ""))
-                            if m and int(m.group(1)) > 0 and s.get("status") == 1:
-                                alarmed = True
+                            summary = s.get("summary", "")
+                            if s.get("status") == 1 and (
+                                    "overdue" in summary or "behind" in summary):
+                                alarmed = summary
                 if alarmed:
                     break
-            check("overload raises the scheduler self-service to WARN "
-                  "with overdue count", alarmed)
+            check(f"overload raises the scheduler self-service to WARN "
+                  f"({alarmed[:80]})", bool(alarmed))
         finally:
             proc.terminate()
             try:
