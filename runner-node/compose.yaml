@@ -34,6 +34,13 @@ services:
       # Management dashboard (:9181). Unset = auto-generated token printed
       # once to the container log; SYNTHMK_ADMIN=off disables the dashboard.
       # - SYNTHMK_ADMIN_TOKEN=change-me
+      # Optional read-only dashboard sign-in (live table + history, no writes).
+      # - SYNTHMK_VIEWER_TOKEN=change-me-too
+      # Audit trail of dashboard actions (JSONL; tail it into your SIEM).
+      # - SYNTHMK_AUDIT_LOG=/var/log/synthmk-audit.log
+      # Allow `type: script` flows (operator Python with full page access).
+      # Enable only when everyone who can write flows may run code as pwuser.
+      # - SYNTHMK_ALLOW_SCRIPTS=1
     volumes:
       - ./flows:/opt/synthmk/flows:ro                          # EDIT: your flow files
       - ./flows.conf:/opt/synthmk/runner-node/flows.conf:ro    # EDIT: your schedule

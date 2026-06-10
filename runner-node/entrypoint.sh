@@ -60,6 +60,10 @@ fi
 
 # 3. management dashboard (token-protected; SYNTHMK_ADMIN=off to disable)
 if [[ "${SYNTHMK_ADMIN:-on}" != "off" ]]; then
+  # Audit trail must be appendable by the (unprivileged) dashboard process.
+  AUDIT_LOG="${SYNTHMK_AUDIT_LOG:-/var/log/synthmk-audit.log}"
+  touch "$AUDIT_LOG" 2>/dev/null || true
+  [[ "$(id -u)" == "0" ]] && chown pwuser:pwuser "$AUDIT_LOG" 2>/dev/null || true
   "${RUNAS[@]}" python3 "$SYNTHMK_HOME/runner-node/admin_server.py" &
 fi
 

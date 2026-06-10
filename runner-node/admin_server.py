@@ -78,21 +78,126 @@ TOKEN = load_token()
 # token still works (so /api/results is reachable out of the box).
 RESULTS_TOKEN = os.environ.get("SYNTHMK_RESULTS_TOKEN", "").strip()
 
+# Optional read-only dashboard role: a viewer token sees the live table, flow
+# YAML and history but every state-changing request is refused. Hand this to
+# the on-call folks who need eyes, not write access.
+VIEWER_TOKEN = os.environ.get("SYNTHMK_VIEWER_TOKEN", "").strip()
+
+# Append-only audit trail of every state-changing dashboard action (and every
+# login attempt): one JSON object per line. Ship it to your SIEM by tailing
+# the file; the dashboard exposes the last entries at /api/audit (admin only).
+AUDIT_FILE = Path(os.environ.get("SYNTHMK_AUDIT_LOG", "/var/log/synthmk-audit.log"))
+_AUDIT_LOCK = threading.Lock()
+
+
+def audit(role: str, ip: str, action: str, target: str = "", ok: bool = True) -> None:
+    entry = json.dumps({
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "ip": ip, "role": role or "unauthenticated",
+        "action": action, "target": target, "ok": bool(ok),
+    }, sort_keys=True)
+    try:
+        with _AUDIT_LOCK:
+            with open(AUDIT_FILE, "a") as fh:
+                fh.write(entry + "\n")
+    except OSError:
+        sys.stderr.write(f"admin-server: audit log unwritable: {AUDIT_FILE}\n")
+
+
+def audit_tail(n: int = 100) -> list[dict]:
+    if not AUDIT_FILE.is_file():
+        return []
+    entries = []
+    for line in AUDIT_FILE.read_text().splitlines()[-n:]:
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return entries
+
+
+# Flow version history: every dashboard save snapshots the previous content,
+# so a bad edit is one click from undone. Plain files, newest-first, capped.
+HISTORY_KEEP = int(os.environ.get("SYNTHMK_HISTORY_KEEP", "10"))
+
+
+def history_dir() -> Path:
+    return FLOWS_DIR / ".history"
+
+
+def snapshot_flow(name: str) -> None:
+    src = FLOWS_DIR / name
+    if not src.is_file():
+        return
+    hdir = history_dir()
+    hdir.mkdir(exist_ok=True)
+    ts = int(time.time())
+    while (hdir / f"{name}.{ts}").exists():
+        ts += 1  # two snapshots in one second must not overwrite each other
+    (hdir / f"{name}.{ts}").write_text(src.read_text())
+    for _, old in _versions_of(name)[HISTORY_KEEP:]:
+        old.unlink(missing_ok=True)
+
+
+def _versions_of(name: str) -> list[tuple[int, Path]]:
+    """(ts, path) snapshots for a flow, newest first."""
+    if not history_dir().is_dir():
+        return []
+    found = []
+    for p in history_dir().glob(f"{name}.*"):
+        ts = p.name.rsplit(".", 1)[-1]
+        if ts.isdigit():
+            found.append((int(ts), p))
+    return sorted(found, reverse=True)
+
+
+def flow_history(name: str) -> list[dict]:
+    return [{"ts": ts,
+             "saved": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)),
+             "bytes": p.stat().st_size}
+            for ts, p in _versions_of(name)]
+
 
 # --- node state assembly ------------------------------------------------------
 
+PAUSED_PREFIX = "#PAUSED "
+
+
+def _parse_conf_line(line: str) -> dict | None:
+    parts = line.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        return None
+    host, tags = "", []
+    for tok in parts[2:]:
+        if tok.startswith("tags="):
+            tags = [t for t in tok[len("tags="):].split(",") if t]
+        elif not host:
+            host = tok
+    return {"file": parts[0], "interval": int(parts[1]),
+            "checkmk_host": host, "tags": tags}
+
+
 def parse_conf() -> list[dict]:
+    """Schedule entries, including paused ones.
+
+    A paused check keeps its line, prefixed `#PAUSED ` — a comment to the
+    scheduler (which therefore skips it with zero special-casing), structured
+    state to the dashboard (which can resume it with the schedule intact).
+    """
     entries = []
     if not CONF.is_file():
         return entries
     for raw in CONF.read_text().splitlines():
         line = raw.strip()
-        if not line or line.startswith("#"):
+        paused = line.startswith(PAUSED_PREFIX)
+        if paused:
+            line = line[len(PAUSED_PREFIX):].strip()
+        elif not line or line.startswith("#"):
             continue
-        parts = line.split()
-        if len(parts) >= 2 and parts[1].isdigit():
-            entries.append({"file": parts[0], "interval": int(parts[1]),
-                            "checkmk_host": parts[2] if len(parts) > 2 else ""})
+        entry = _parse_conf_line(line)
+        if entry:
+            entry["paused"] = paused
+            entries.append(entry)
     return entries
 
 
@@ -190,14 +295,39 @@ def lint_flow_text(text: str) -> tuple[bool, str]:
         os.unlink(tmp)
 
 
-def update_conf(flow_file: str, interval: int | None, host: str) -> None:
+def _is_entry_for(line: str, flow_file: str) -> bool:
+    stripped = line.strip()
+    if stripped.startswith(PAUSED_PREFIX):
+        stripped = stripped[len(PAUSED_PREFIX):].strip()
+    parts = stripped.split()
+    return bool(parts) and parts[0] == flow_file
+
+
+def update_conf(flow_file: str, interval: int | None, host: str,
+                tags: list[str] | None = None, paused: bool = False) -> None:
     """Add or update the schedule line for flow_file (interval None = remove)."""
     lines = CONF.read_text().splitlines() if CONF.is_file() else []
-    kept = [ln for ln in lines
-            if not (ln.split() and ln.split()[0] == flow_file)]
+    kept = [ln for ln in lines if not _is_entry_for(ln, flow_file)]
     if interval is not None:
-        kept.append(f"{flow_file} {interval}" + (f" {host}" if host else ""))
+        line = f"{flow_file} {interval}"
+        if host:
+            line += f" {host}"
+        if tags:
+            line += " tags=" + ",".join(t.strip() for t in tags if t.strip())
+        if paused:
+            line = PAUSED_PREFIX + line
+        kept.append(line)
     CONF.write_text("\n".join(kept) + "\n")
+
+
+def set_paused(flow_file: str, paused: bool) -> bool:
+    """Flip the paused marker, preserving interval/host/tags. False = no entry."""
+    for entry in parse_conf():
+        if entry["file"] == flow_file:
+            update_conf(flow_file, entry["interval"], entry["checkmk_host"],
+                        entry["tags"], paused)
+            return True
+    return False
 
 
 # --- visual step builder session -----------------------------------------------
@@ -318,8 +448,19 @@ class AdminHandler(BaseHTTPRequestHandler):
             return cookie["synthmk_admin"].value
         return ""
 
+    def _role(self) -> str:
+        tok = self._client_token()
+        if tok and hmac.compare_digest(tok, TOKEN):
+            return "admin"
+        if VIEWER_TOKEN and tok and hmac.compare_digest(tok, VIEWER_TOKEN):
+            return "viewer"
+        return ""
+
     def _authed(self) -> bool:
-        return hmac.compare_digest(self._client_token(), TOKEN)
+        return self._role() != ""
+
+    def _ip(self) -> str:
+        return self.client_address[0] if self.client_address else "?"
 
     def _results_authed(self) -> bool:
         # /api/results accepts the scoped read-only token or the admin token.
@@ -351,11 +492,15 @@ class AdminHandler(BaseHTTPRequestHandler):
             return self._send(200, LOGIN_HTML.encode(), "text/html; charset=utf-8")
         if url.path == "/api/login":
             tok = (parse_qs(url.query).get("token") or [""])[0]
-            if hmac.compare_digest(tok, TOKEN):
+            ok_admin = hmac.compare_digest(tok, TOKEN)
+            ok_viewer = bool(VIEWER_TOKEN) and hmac.compare_digest(tok, VIEWER_TOKEN)
+            if ok_admin or ok_viewer:
+                audit("admin" if ok_admin else "viewer", self._ip(), "login")
                 return self._send(200, b'{"ok": true}', "application/json", {
                     "Set-Cookie": "synthmk_admin=" + tok +
                                   "; HttpOnly; SameSite=Strict; Path=/",
                 })
+            audit("", self._ip(), "login", ok=False)
             return self._json(403, {"ok": False, "error": "bad token"})
         if url.path == "/api/results":
             # Read-only feed for the multi-node special agent (separate token).
@@ -370,7 +515,9 @@ class AdminHandler(BaseHTTPRequestHandler):
         if url.path == "/":
             return self._send(200, DASH_HTML.encode(), "text/html; charset=utf-8")
         if url.path == "/api/state":
-            return self._json(200, node_state())
+            state = node_state()
+            state["role"] = self._role()
+            return self._json(200, state)
         if url.path == "/api/flow":
             name = (parse_qs(url.query).get("file") or [""])[0]
             if not FLOW_NAME_RE.match(name):
@@ -379,19 +526,46 @@ class AdminHandler(BaseHTTPRequestHandler):
             if not path.is_file():
                 return self._json(404, {"error": "not found"})
             return self._json(200, {"file": name, "yaml": path.read_text()})
+        if url.path == "/api/flow/history":
+            name = (parse_qs(url.query).get("file") or [""])[0]
+            if not FLOW_NAME_RE.match(name):
+                return self._json(400, {"error": "bad flow filename"})
+            return self._json(200, {"file": name, "versions": flow_history(name)})
+        if url.path == "/api/flow/version":
+            q = parse_qs(url.query)
+            name = (q.get("file") or [""])[0]
+            ts = (q.get("ts") or [""])[0]
+            if not FLOW_NAME_RE.match(name) or not ts.isdigit():
+                return self._json(400, {"error": "bad file or ts"})
+            path = history_dir() / f"{name}.{ts}"
+            if not path.is_file():
+                return self._json(404, {"error": "version not found"})
+            return self._json(200, {"file": name, "ts": int(ts),
+                                    "yaml": path.read_text()})
+        if url.path == "/api/audit":
+            if self._role() != "admin":
+                return self._json(403, {"error": "admin token required"})
+            n = (parse_qs(url.query).get("n") or ["100"])[0]
+            n = max(1, min(int(n), 1000)) if n.isdigit() else 100
+            return self._json(200, {"entries": audit_tail(n)})
         if url.path == "/api/builder/shot":
+            if self._role() != "admin":
+                return self._json(403, {"error": "admin token required"})
             return self._json(200, BUILDER.request({"cmd": "shot"}))
         return self._json(404, {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
         url = urlparse(self.path)
-        if not self._authed() or not self._csrf_ok():
-            return self._json(401, {"error": "auth required (token + X-SynthMK-Token header)"})
+        # Every state change requires the ADMIN token (viewers are read-only)
+        # plus the CSRF header.
+        if self._role() != "admin" or not self._csrf_ok():
+            return self._json(401, {"error": "admin token required (+ X-SynthMK-Token header)"})
 
         if url.path == "/api/builder/start":
             target = str(self._body().get("url", "")).strip()
             if not target.startswith(("http://", "https://")):
                 return self._json(400, {"error": "url must start with http:// or https://"})
+            audit("admin", self._ip(), "builder_start", target)
             return self._json(200, BUILDER.request({"cmd": "start", "url": target}, 90))
 
         if url.path == "/api/builder/pick":
@@ -409,6 +583,7 @@ class AdminHandler(BaseHTTPRequestHandler):
             return self._json(200, BUILDER.request({"cmd": "step", "step": step}, 60))
 
         if url.path == "/api/builder/stop":
+            audit("admin", self._ip(), "builder_stop")
             return self._json(200, BUILDER.stop())
 
         if url.path == "/api/run":
@@ -418,7 +593,21 @@ class AdminHandler(BaseHTTPRequestHandler):
                 return self._json(400, {"error": "bad flow filename"})
             RUN_NOW_DIR.mkdir(parents=True, exist_ok=True)
             (RUN_NOW_DIR / name).touch()
+            audit("admin", self._ip(), "run_now", name)
             return self._json(200, {"ok": True, "queued": name})
+
+        if url.path == "/api/pause":
+            body = self._body()
+            name = body.get("file", "")
+            paused = bool(body.get("paused"))
+            if not FLOW_NAME_RE.match(name):
+                return self._json(400, {"error": "bad flow filename"})
+            if not (CONF.is_file() and os.access(CONF, os.W_OK)):
+                return self._json(409, {"error": "flows.conf is not writable"})
+            if not set_paused(name, paused):
+                return self._json(404, {"error": "no schedule entry for that flow"})
+            audit("admin", self._ip(), "pause" if paused else "resume", name)
+            return self._json(200, {"ok": True, "file": name, "paused": paused})
 
         if url.path == "/api/flow":
             body = self._body()
@@ -426,20 +615,50 @@ class AdminHandler(BaseHTTPRequestHandler):
             yaml_text = body.get("yaml", "")
             interval = body.get("interval")
             host = str(body.get("checkmk_host", "") or "")
+            raw_tags = body.get("tags", [])
+            if isinstance(raw_tags, str):
+                raw_tags = [t for t in raw_tags.split(",")]
+            tags = [t.strip() for t in raw_tags if str(t).strip()]
             if not FLOW_NAME_RE.match(name):
                 return self._json(400, {"error": "bad flow filename"})
             if not os.access(FLOWS_DIR, os.W_OK):
                 return self._json(409, {"error": "flows directory is mounted read-only"})
             ok, report = lint_flow_text(yaml_text)
             if not ok:
+                audit("admin", self._ip(), "flow_save", name, ok=False)
                 return self._json(422, {"error": "flow failed lint", "lint": report})
+            snapshot_flow(name)  # previous content -> .history (rollback point)
             (FLOWS_DIR / name).write_text(yaml_text)
+            audit("admin", self._ip(), "flow_save", name)
             if interval is not None:
                 try:
-                    update_conf(name, int(interval), host)
+                    was_paused = any(e["file"] == name and e["paused"]
+                                     for e in parse_conf())
+                    update_conf(name, int(interval), host, tags, was_paused)
                 except Exception as exc:
                     return self._json(500, {"error": f"flow saved but schedule update failed: {exc}"})
             return self._json(200, {"ok": True, "lint": report})
+
+        if url.path == "/api/flow/rollback":
+            body = self._body()
+            name = body.get("file", "")
+            ts = str(body.get("ts", ""))
+            if not FLOW_NAME_RE.match(name) or not ts.isdigit():
+                return self._json(400, {"error": "bad file or ts"})
+            if not os.access(FLOWS_DIR, os.W_OK):
+                return self._json(409, {"error": "flows directory is mounted read-only"})
+            src = history_dir() / f"{name}.{ts}"
+            if not src.is_file():
+                return self._json(404, {"error": "version not found"})
+            text = src.read_text()
+            ok, report = lint_flow_text(text)
+            if not ok:
+                return self._json(422, {"error": "stored version no longer lints "
+                                                 "(engine moved on?)", "lint": report})
+            snapshot_flow(name)
+            (FLOWS_DIR / name).write_text(text)
+            audit("admin", self._ip(), "flow_rollback", f"{name}@{ts}")
+            return self._json(200, {"ok": True, "file": name, "restored": int(ts)})
 
         return self._json(404, {"error": "not found"})
 
@@ -482,6 +701,8 @@ tr:last-child td{border-bottom:0}
 .b0{background:rgba(45,212,191,.15);color:var(--teal)}.b1{background:rgba(251,191,36,.15);color:var(--amber)}
 .b2{background:rgba(248,113,113,.18);color:var(--red)}.b3{background:rgba(148,163,184,.15);color:var(--dim)}
 .stale{opacity:.55}
+.tag{display:inline-block;font-size:.68rem;color:var(--dim);border:1px solid var(--line);border-radius:99px;padding:.05rem .45rem;margin-left:.35rem}
+.paused td{opacity:.6}
 button{padding:.32rem .7rem;border-radius:7px;border:1px solid var(--line);background:#0f172a;color:var(--text);cursor:pointer;font-size:.78rem}
 button:hover{border-color:var(--teal);color:var(--teal)}
 a{color:var(--teal)}
@@ -579,12 +800,19 @@ textarea{width:100%;height:300px;background:#020617;color:#cbd5e1;border:1px sol
     <label>File <input id="efile" size="24" placeholder="my-check.yaml"></label>
     <label>Interval (s) <input id="eint" size="6" value="300"></label>
     <label>Piggyback host <input id="ehost" size="16" placeholder="(optional)"></label>
+    <label>Tags <input id="etags" size="16" placeholder="payments,critical"></label>
   </div>
   <textarea id="eyaml" spellcheck="false"></textarea>
   <div class="row">
     <button class="primary" onclick="saveFlow()">Lint &amp; save</button>
     <button onclick="document.getElementById('editor').style.display='none'">Close</button>
     <span id="msg"></span>
+  </div>
+  <div class="row" id="histrow" style="display:none">
+    <label>History <select id="ehist"></select></label>
+    <button onclick="loadVersion()">View version</button>
+    <button onclick="rollbackVersion()">Roll back to it</button>
+    <span class="bhint">Every save keeps the previous version; roll back re-lints first.</span>
   </div>
 </div>
 
@@ -595,37 +823,83 @@ function hdrs(){return {'Content-Type':'application/json','X-SynthMK-Token':TOKE
 const SN=['OK','WARN','CRIT','UNKNOWN'];
 function badge(s){return '<span class="b b'+s+'">'+SN[s]+'</span>';}
 function fmtAge(s){if(s==null)return '—';if(s<90)return s+'s ago';if(s<5400)return Math.round(s/60)+'m ago';return Math.round(s/3600)+'h ago';}
+let ROLE='admin',FLOWS=[];
 async function refresh(){
   const r=await fetch('/api/state');if(r.status===401){location.href='/login';return;}
-  const st=await r.json();
-  document.getElementById('ver').textContent='v'+st.version;
+  const st=await r.json();ROLE=st.role||'admin';FLOWS=st.flows;
+  document.getElementById('ver').textContent='v'+st.version+(ROLE==='viewer'?' · read-only':'');
   if(st.scheduler){document.getElementById('sched').textContent='scheduler: '+st.scheduler.summary;}
-  document.getElementById('newbtn').style.display=st.flows_dir_writable?'':'none';
-  const rows=st.flows.map(f=>{
-    const l=f.last||{};const stale=l._stale?' class="stale"':'';
+  const canWrite=st.flows_dir_writable&&ROLE==='admin';
+  document.getElementById('newbtn').style.display=canWrite?'':'none';
+  document.getElementById('builderbtn').style.display=ROLE==='admin'?'':'none';
+  const rows=st.flows.map((f,i)=>{
+    const l=f.last||{};const cls=(f.paused?' class="paused"':(l._stale?' class="stale"':''));
     const steps=(l.steps||[]).map(s=>s.label.replace(/^step\\d+_/,'')+' '+s.ms+'ms').join(' → ');
     const shot=l.screenshot_url?' <a href="'+l.screenshot_url+'" target="_blank">📷</a>':'';
-    return '<tr'+stale+'><td>'+(l.service||f.file)+shot+'</td><td>'+(l.status!=null?badge(l.status):'—')+
+    const tags=(f.tags||[]).map(t=>'<span class="tag">'+t+'</span>').join('');
+    const state=f.paused?'<span class="b b3">PAUSED</span>':(l.status!=null?badge(l.status):'—');
+    const acts=ROLE!=='admin'?'':
+      '<button onclick="runNow('+i+')">Run now</button> '+
+      '<button onclick="editFlow('+i+')">Edit</button> '+
+      '<button onclick="pauseFlow('+i+')">'+(f.paused?'Resume':'Pause')+'</button>';
+    return '<tr'+cls+'><td>'+(l.service||f.file)+tags+shot+'</td><td>'+state+
       '</td><td>'+(l.duration_ms!=null?l.duration_ms+'ms':'—')+'</td><td class="steps">'+steps+
       '</td><td>'+f.interval+'s</td><td>'+(f.checkmk_host||'—')+'</td><td>'+fmtAge(l._age_s)+
-      '</td><td><button onclick="runNow(\\''+f.file+'\\')">Run now</button> '+
-      '<button onclick="editFlow(\\''+f.file+'\\','+f.interval+',\\''+(f.checkmk_host||'')+'\\')">Edit</button></td></tr>';
+      '</td><td>'+acts+'</td></tr>';
   });
   document.getElementById('rows').innerHTML=rows.join('')||'<tr><td colspan="8">No checks configured.</td></tr>';
 }
-async function runNow(file){await fetch('/api/run',{method:'POST',headers:hdrs(),body:JSON.stringify({file})});setTimeout(refresh,1200);}
-async function editFlow(file,interval,host){
-  const r=await fetch('/api/flow?file='+encodeURIComponent(file));const d=await r.json();
-  document.getElementById('etitle').textContent='Edit '+file;
-  document.getElementById('efile').value=file;document.getElementById('eint').value=interval;
-  document.getElementById('ehost').value=host;document.getElementById('eyaml').value=d.yaml||'';
+async function runNow(i){await fetch('/api/run',{method:'POST',headers:hdrs(),body:JSON.stringify({file:FLOWS[i].file})});setTimeout(refresh,1200);}
+async function pauseFlow(i){
+  await fetch('/api/pause',{method:'POST',headers:hdrs(),
+    body:JSON.stringify({file:FLOWS[i].file,paused:!FLOWS[i].paused})});
+  setTimeout(refresh,400);
+}
+async function editFlow(i){
+  const f=FLOWS[i];
+  const r=await fetch('/api/flow?file='+encodeURIComponent(f.file));const d=await r.json();
+  document.getElementById('etitle').textContent='Edit '+f.file;
+  document.getElementById('efile').value=f.file;document.getElementById('eint').value=f.interval;
+  document.getElementById('ehost').value=f.checkmk_host||'';
+  document.getElementById('etags').value=(f.tags||[]).join(',');
+  document.getElementById('eyaml').value=d.yaml||'';
   document.getElementById('msg').textContent='';document.getElementById('editor').style.display='block';
+  loadHistory(f.file);
   window.scrollTo(0,document.body.scrollHeight);
+}
+async function loadHistory(file){
+  const row=document.getElementById('histrow');
+  const r=await fetch('/api/flow/history?file='+encodeURIComponent(file));
+  const d=await r.json();
+  if(!d.versions||!d.versions.length){row.style.display='none';return;}
+  document.getElementById('ehist').innerHTML=d.versions.map(v=>
+    '<option value="'+v.ts+'">'+v.saved+' ('+v.bytes+' B)</option>').join('');
+  row.style.display='flex';
+}
+async function loadVersion(){
+  const file=document.getElementById('efile').value,ts=document.getElementById('ehist').value;
+  const r=await fetch('/api/flow/version?file='+encodeURIComponent(file)+'&ts='+ts);
+  const d=await r.json();
+  if(d.yaml!=null){document.getElementById('eyaml').value=d.yaml;
+    document.getElementById('msg').textContent='Viewing version '+ts+' (not saved).';}
+}
+async function rollbackVersion(){
+  const file=document.getElementById('efile').value,ts=document.getElementById('ehist').value;
+  const r=await fetch('/api/flow/rollback',{method:'POST',headers:hdrs(),
+    body:JSON.stringify({file,ts})});
+  const d=await r.json();
+  document.getElementById('msg').textContent=r.ok?'Rolled back ✓':(d.error||'rollback failed');
+  if(r.ok){editFlowByName(file);setTimeout(refresh,500);}
+}
+function editFlowByName(file){
+  const i=FLOWS.findIndex(f=>f.file===file);
+  if(i>=0)editFlow(i);
 }
 function newFlow(){
   document.getElementById('etitle').textContent='New check';
   document.getElementById('efile').value='my-check.yaml';document.getElementById('eint').value='300';
-  document.getElementById('ehost').value='';
+  document.getElementById('ehost').value='';document.getElementById('etags').value='';
+  document.getElementById('histrow').style.display='none';
   document.getElementById('eyaml').value='name: My Synthetic Check\\ntimeout_ms: 20000\\nwarn_ms: 5000\\ncrit_ms: 15000\\nscreenshot_on_failure: true\\nsteps:\\n  - action: open_url\\n    url: https://example.com\\n  - action: check_title\\n    contains: Example\\n';
   document.getElementById('msg').textContent='';document.getElementById('editor').style.display='block';
   window.scrollTo(0,document.body.scrollHeight);
@@ -634,7 +908,8 @@ async function saveFlow(){
   const body={file:document.getElementById('efile').value,
     yaml:document.getElementById('eyaml').value,
     interval:parseInt(document.getElementById('eint').value,10),
-    checkmk_host:document.getElementById('ehost').value};
+    checkmk_host:document.getElementById('ehost').value,
+    tags:document.getElementById('etags').value};
   const r=await fetch('/api/flow',{method:'POST',headers:hdrs(),body:JSON.stringify(body)});
   const d=await r.json();
   document.getElementById('msg').textContent=r.ok?('Saved ✓\\n'+(d.lint||'')):(d.error+'\\n'+(d.lint||''));

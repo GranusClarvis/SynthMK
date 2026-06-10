@@ -108,8 +108,16 @@ def parse_conf(conf: Path) -> list[Flow]:
         if len(parts) < 2 or not parts[1].isdigit() or int(parts[1]) <= 0:
             log(f"skip bad config line: {raw!r}")
             continue
-        flows.append(Flow(file=parts[0], interval=int(parts[1]),
-                          host=parts[2] if len(parts) > 2 else ""))
+        # Optional trailing tokens: a piggyback host and/or tags=a,b (tags are
+        # dashboard metadata; the scheduler ignores them but must not mistake
+        # them for a host).
+        host = ""
+        for tok in parts[2:]:
+            if tok.startswith("tags="):
+                continue
+            if not host:
+                host = tok
+        flows.append(Flow(file=parts[0], interval=int(parts[1]), host=host))
     return flows
 
 
