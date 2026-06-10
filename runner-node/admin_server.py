@@ -741,7 +741,7 @@ class AdminHandler(BaseHTTPRequestHandler):
 
 
 LOGIN_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
-<title>SynthMK Node — sign in</title><style>
+<title>SynthMK Node: sign in</title><style>
 body{font:15px system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:grid;place-items:center;height:100vh;margin:0}
 form{background:#1e293b;padding:2rem;border-radius:12px;width:22rem;box-shadow:0 8px 40px rgba(0,0,0,.4)}
 h1{font-size:1.1rem;color:#2dd4bf;margin:0 0 1rem}
@@ -1092,7 +1092,7 @@ function bRenderFields(){
     const v=e.isPassword?'{{ secret.password }}':(e.text||'');
     h+=`<label>Value</label><input type="text" id="bval" value="${bEsc(v)}">`+
        `<label><input type="checkbox" id="bsens" ${e.isPassword?'checked':''} style="width:auto"> sensitive (mask in screenshots, redact in output)</label>`+
-       (e.isPassword?'<div class="bhint">Password detected — the value stays a secret reference; put the real value in the node’s secrets file.</div>':'');
+       (e.isPassword?'<div class="bhint">Password detected: the value stays a secret reference; put the real value in the node’s secrets file.</div>':'');
   }else if(a==='select_option'){
     const o=(e.options||[]).map(x=>`<option value="${bEsc(x.value)}">${bEsc(x.label||x.value)}</option>`).join('');
     h+=`<label>Option</label>`+(o?`<select id="bval">${o}</select>`:`<input type="text" id="bval">`);
@@ -1138,7 +1138,7 @@ async function bAddStep(){
 async function bQuick(kind){
   let st=null;
   if(kind==='check_title'){const t=prompt('Title must contain:',
-    (document.getElementById('bpageurl').textContent.split(' — ')[0]||'').trim());
+    (document.getElementById('bpageurl').textContent.split(' · ')[0]||'').trim());
     if(t===null)return;st={action:'check_title',contains:t};}
   else if(kind==='check_url'){const u=prompt('URL must contain:','/');
     if(u===null)return;st={action:'check_url',contains:u};}
@@ -1153,7 +1153,7 @@ async function bRunAndRecord(st){
   bStatus('Testing step on the live page…');
   const d=await bApi('/api/builder/step',{step:st});
   bShowShot(d);
-  if(d.ok===false){bStatus('Step failed: '+d.error+' — not added.',true);return;}
+  if(d.ok===false){bStatus('Step failed: '+d.error+'. Not added.',true);return;}
   bSteps.push({step:st,label:bStepLabel(st),tested:true});
   bRenderSteps();bStatus('Step added ✓');
   document.getElementById('belem').innerHTML='<h3>Element</h3><div class="bhint">Click the next element in the preview.</div>';
@@ -1174,7 +1174,7 @@ async function bReplay(){
     d=await bApi('/api/builder/step',{step:bSteps[i].step});
     if(d.ok===false){bShowShot(d);bStatus('Replay failed at step '+i+': '+d.error,true);return;}
   }
-  bShowShot(d);bStatus('Replay OK — '+bSteps.length+' steps ✓');
+  bShowShot(d);bStatus('Replay OK: '+bSteps.length+' steps ✓');
 }
 function bEsc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function yScalar(v){
