@@ -92,6 +92,9 @@ TOP_LEVEL_KNOWN = {
     # v0.2.0 additions:
     "checkmk_host",   # piggyback target host; the result is attributed to it
     "state_mode",     # "digit" (default) | "dynamic" (emit 'P', Checkmk thresholds)
+    # v0.5.0 additions:
+    "type",           # "flow" (default) | "script" (Playwright Python, trust-gated)
+    "script",         # script flows: path to the .py, relative to the flow file
 }
 
 # Allowed values for the state_mode top-level field.
@@ -157,6 +160,24 @@ def lint_flow(data: Any, *, source: str = "<flow>",
     checkmk_host = data.get("checkmk_host")
     if checkmk_host is not None and (not isinstance(checkmk_host, str) or not checkmk_host.strip()):
         errors.append(f"{source}: checkmk_host must be a non-empty string when set")
+
+    ftype = str(data.get("type", "flow"))
+    if ftype not in ("flow", "script"):
+        errors.append(f"{source}: type '{ftype}' must be 'flow' or 'script'")
+        return (errors, warnings)
+    if ftype == "script":
+        ref = data.get("script")
+        if not isinstance(ref, str) or not ref.strip():
+            errors.append(f"{source}: type: script requires a 'script' path")
+        elif Path(ref).is_absolute():
+            errors.append(f"{source}: script path must be relative to the flow file")
+        elif base_dir is not None and not (base_dir / ref).is_file():
+            errors.append(f"{source}: script file not found: {ref}")
+        if "steps" in data:
+            warnings.append(f"{source}: 'steps' is ignored on a type: script flow")
+        if isinstance(ref, str) and ref.strip() and not ref.endswith(".py"):
+            warnings.append(f"{source}: script path should end in .py")
+        return (errors, warnings)
 
     steps = data.get("steps")
     if not isinstance(steps, list):
@@ -272,7 +293,10 @@ def lint_path(path: Path, base_dir: Path | None = None) -> int:
         print(f"  FAIL - {e}")
     if errors:
         return 2
-    print(f"  ok   - {path} ({len(data.get('steps', []))} steps)")
+    if isinstance(data, dict) and str(data.get("type", "flow")) == "script":
+        print(f"  ok   - {path} (script: {data.get('script')})")
+    else:
+        print(f"  ok   - {path} ({len(data.get('steps', []))} steps)")
     return 0
 
 

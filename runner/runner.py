@@ -194,6 +194,22 @@ def load_flow(path: Path) -> dict[str, Any]:
     data = yaml.safe_load(path.read_text())
     if not isinstance(data, dict):
         raise FlowError(f"Flow file {path} did not parse to a mapping", UNKNOWN)
+    if str(data.get("type", "flow")) == "script":
+        # Script flows run operator-authored Playwright Python with full page
+        # access — real code, no YAML ceiling. That power is an explicit trust
+        # decision, so the node must opt in via SYNTHMK_ALLOW_SCRIPTS=1.
+        if not os.environ.get("SYNTHMK_ALLOW_SCRIPTS"):
+            raise FlowError(
+                "script flows are disabled on this node "
+                "(set SYNTHMK_ALLOW_SCRIPTS=1 to enable)", UNKNOWN)
+        ref = str(data.get("script", "")).strip()
+        if not ref:
+            raise FlowError(f"Flow file {path} is type: script but has no 'script'", UNKNOWN)
+        if Path(ref).is_absolute():
+            raise FlowError("script path must be relative to the flow file", UNKNOWN)
+        if not (path.parent / ref).is_file():
+            raise FlowError(f"script not found: {ref}", UNKNOWN)
+        return data
     if "steps" not in data or not isinstance(data["steps"], list):
         raise FlowError(f"Flow file {path} missing a 'steps' list", UNKNOWN)
     data["steps"] = expand_includes(data["steps"], path.parent)
@@ -458,6 +474,143 @@ _MASK_INPUTS_JS = (
 )
 
 
+class ScriptApi:
+    """The `api` object handed to a script flow's run(page, api).
+
+    Scripts get the raw Playwright page — the api adds what monitoring needs
+    on top of test code: named per-step timings (graphed in Checkmk), secret
+    access with automatic redaction, evidence screenshots, clean failures.
+
+        def run(page, api):
+            page.goto("https://portal.example/login")
+            with api.step("login"):
+                page.fill("#user", api.secret("portal_user"))
+                page.fill("#pw", api.secret("portal_password"))
+                page.click("button[type=submit]")
+            with api.step("dashboard"):
+                page.wait_for_selector("#dashboard")
+                if "Dashboard" not in page.title():
+                    api.fail("dashboard title missing after login")
+    """
+
+    def __init__(self, page, ctx: dict[str, Any], timings: list[tuple[str, int]]):
+        self._page = page
+        self._ctx = ctx
+        self._timings = timings
+        self._seq = 0
+        self.current_step: str | None = None
+
+    def secret(self, name: str) -> str:
+        value = _substitute("{{ secret.%s }}" % name)
+        # Anything a script pulls from the secret store is treated as
+        # sensitive: redacted from output and masked in screenshots.
+        secret_source.register_sensitive(value)
+        self._ctx["sensitive_used"] = True
+        return value
+
+    def totp(self, name: str) -> str:
+        return _substitute("{{ totp.%s }}" % name)
+
+    def var(self, name: str) -> str:
+        return _substitute("{{ var.%s }}" % name)
+
+    def fail(self, message: str) -> None:
+        raise FlowError(str(message))
+
+    def step(self, label: str):
+        api = self
+
+        class _Step:
+            def __enter__(self):
+                api.current_step = label
+                self._start = time.monotonic()
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                clean = re.sub(r"[^A-Za-z0-9_]", "_", f"step{api._seq}_{label}")
+                api._timings.append((clean, int((time.monotonic() - self._start) * 1000)))
+                api._seq += 1
+                if exc_type is None:
+                    api.current_step = None
+                return False  # never swallow failures
+
+        return _Step()
+
+    def screenshot(self, name: str = "evidence") -> str | None:
+        return _capture_screenshot(self._page, self._ctx, name)
+
+
+def _capture_screenshot(page, ctx: dict[str, Any], name: str) -> str | None:
+    """Shared evidence capture: masked when secrets touched, never raises."""
+    shot_dir = ctx.get("shot_dir")
+    if shot_dir is None:
+        return None
+    seq = ctx.get("shot_seq", 0)
+    ctx["shot_seq"] = seq + 1
+    label = re.sub(r"[^A-Za-z0-9_-]", "_", str(name or f"step{seq}"))
+    shot = Path(shot_dir) / f"{ctx.get('flow_stem', 'flow')}-{label}.png"
+    try:
+        Path(shot_dir).mkdir(parents=True, exist_ok=True)
+        if ctx.get("sensitive_used"):
+            page.evaluate(_MASK_INPUTS_JS)
+        page.screenshot(path=str(shot), full_page=False)
+        ctx.setdefault("screenshots", []).append(str(shot))
+        return str(shot)
+    except Exception:
+        return None
+
+
+def _execute_script_flow(flow: dict[str, Any], path: Path, page,
+                         ctx: dict[str, Any], timings: list[tuple[str, int]],
+                         result: FlowResult, shot_on_fail: bool) -> None:
+    """Load and run a `type: script` flow's run(page, api) entry point."""
+    import importlib.util
+
+    script_path = (path.parent / str(flow["script"])).resolve()
+    try:
+        spec = importlib.util.spec_from_file_location(
+            f"synthmk_script_{path.stem}", script_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except SyntaxError as exc:
+        result.status = UNKNOWN
+        result.summary = f"Script has a syntax error: line {exc.lineno}"
+        return
+    except Exception as exc:
+        result.status = UNKNOWN
+        result.summary = f"Script failed to load: {str(exc).splitlines()[0]}"
+        return
+    run = getattr(module, "run", None)
+    if not callable(run):
+        result.status = UNKNOWN
+        result.summary = "Script defines no run(page, api) function"
+        return
+
+    api = ScriptApi(page, ctx, timings)
+    try:
+        run(page, api)
+    except FlowError as fe:
+        result.status = fe.status
+        result.summary = str(fe) + (f" (in step '{api.current_step}')" if api.current_step else "")
+    except secret_source.SecretError as exc:
+        result.status = UNKNOWN
+        result.summary = str(exc)
+    except AssertionError as exc:
+        result.status = CRIT
+        msg = str(exc).strip().splitlines()[0] if str(exc).strip() else "assertion failed"
+        result.summary = f"Script assertion failed: {msg}" + (
+            f" (in step '{api.current_step}')" if api.current_step else "")
+    except Exception as exc:
+        result.status = CRIT
+        first = str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
+        result.summary = f"Script failed: {first}" + (
+            f" (in step '{api.current_step}')" if api.current_step else "")
+    if result.status not in (OK,) and shot_on_fail:
+        shot = _capture_screenshot(page, ctx, f"fail-{path.stem}")
+        if shot:
+            result.screenshot = shot
+
+
 def run_flow(
     path: Path,
     headed: bool = False,
@@ -527,6 +680,24 @@ def run_flow(
         }
         timings: list[tuple[str, int]] = []
         result.step_timings = timings
+        if str(flow.get("type", "flow")) == "script":
+            try:
+                page.set_default_timeout(default_timeout)
+                _execute_script_flow(flow, path, page, ctx, timings, result,
+                                     shot_on_fail)
+            finally:
+                result.duration_ms = int((time.monotonic() - start) * 1000)
+                browser.close()
+            if result.status == OK and not dynamic:
+                if crit_ms is not None and result.duration_ms >= crit_ms:
+                    result.status = CRIT
+                    result.summary = (f"Flow passed but took {result.duration_ms}ms "
+                                      f"(crit threshold {crit_ms}ms)")
+                elif warn_ms is not None and result.duration_ms >= warn_ms:
+                    result.status = WARN
+                    result.summary = (f"Flow passed but took {result.duration_ms}ms "
+                                      f"(warn threshold {warn_ms}ms)")
+            return result
         try:
             for i, step in enumerate(flow["steps"]):
                 step_start = time.monotonic()

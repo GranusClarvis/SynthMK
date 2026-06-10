@@ -552,6 +552,99 @@ def main() -> int:
             source="t")
         check("lint without base_dir does not follow includes", errs == [])
 
+    print("== v0.5.0: script flows (trust-gated code path) ==")
+    with _tf.TemporaryDirectory() as td:
+        tdp = Path(td)
+        (tdp / "j.py").write_text(
+            "def run(page, api):\n"
+            "    with api.step('open'):\n"
+            "        page.title()\n"
+            "    with api.step('verify'):\n"
+            "        assert page.title() == 'SynthMK Demo App'\n")
+        (tdp / "s.yaml").write_text(
+            "name: Scripted\ntype: script\nscript: j.py\n")
+
+        os.environ.pop("SYNTHMK_ALLOW_SCRIPTS", None)
+        try:
+            R.load_flow(tdp / "s.yaml")
+            check("script flow blocked without SYNTHMK_ALLOW_SCRIPTS", False)
+        except R.FlowError as fe:
+            check("script flow blocked without SYNTHMK_ALLOW_SCRIPTS",
+                  fe.status == R.UNKNOWN and "disabled" in str(fe))
+        os.environ["SYNTHMK_ALLOW_SCRIPTS"] = "1"
+        flow = R.load_flow(tdp / "s.yaml")
+        check("script flow loads when gate is open", flow["script"] == "j.py")
+        (tdp / "missing.yaml").write_text("type: script\nscript: nope.py\n")
+        try:
+            R.load_flow(tdp / "missing.yaml")
+            check("missing script file is UNKNOWN at load", False)
+        except R.FlowError as fe:
+            check("missing script file is UNKNOWN at load", fe.status == R.UNKNOWN)
+
+        def run_script(page=None):
+            res = R.FlowResult(service="S")
+            timings: list = []
+            res.step_timings = timings
+            R._execute_script_flow(flow, tdp / "s.yaml", page or FakePage(),
+                                   {"flow_stem": "s"}, timings, res, False)
+            return res, timings
+
+        res, timings = run_script()
+        check("passing script stays OK", res.status == R.OK)
+        check("api.step records named timings",
+              [t[0] for t in timings] == ["step0_open", "step1_verify"])
+
+        res, _ = run_script(FakePage(title="Broken"))
+        check("script assertion failure is CRIT", res.status == R.CRIT)
+        check("failure names the script step", "in step 'verify'" in res.summary)
+
+        (tdp / "j.py").write_text(
+            "def run(page, api):\n"
+            "    api.fail('backend returned a 500 banner')\n")
+        res, _ = run_script()
+        check("api.fail message surfaces", "500 banner" in res.summary
+              and res.status == R.CRIT)
+
+        (tdp / "j.py").write_text("def helper():\n    pass\n")
+        res, _ = run_script()
+        check("script without run() is UNKNOWN",
+              res.status == R.UNKNOWN and "run(page, api)" in res.summary)
+
+        (tdp / "j.py").write_text("def run(page, api:\n")
+        res, _ = run_script()
+        check("script syntax error is UNKNOWN with line",
+              res.status == R.UNKNOWN and "syntax error" in res.summary)
+
+        # api.secret pulls from the loaded secret store and registers redaction.
+        (tdp / "j.py").write_text(
+            "def run(page, api):\n"
+            "    v = api.secret('portal_password')\n"
+            "    raise RuntimeError('could not type ' + v)\n")
+        S.reset()
+        R._SECRETS = {"portal_password": "hunter2-script"}
+        res, _ = run_script()
+        check("api.secret value is redacted from failures",
+              "hunter2-script" not in R._oneline(res.summary)
+              and S.MASK in R._oneline(res.summary))
+        R._SECRETS = None
+        S.reset()
+        os.environ.pop("SYNTHMK_ALLOW_SCRIPTS", None)
+
+        errs, warns = L.lint_flow(
+            {"name": "s", "type": "script", "script": "j.py"},
+            source="t", base_dir=tdp)
+        check("lint accepts a script flow with resolvable script", errs == [])
+        errs, _ = L.lint_flow(
+            {"name": "s", "type": "script", "script": "nope.py"},
+            source="t", base_dir=tdp)
+        check("lint flags a missing script file",
+              any("script file not found" in e for e in errs))
+        errs, _ = L.lint_flow({"name": "s", "type": "script"}, source="t")
+        check("lint requires 'script' on type: script",
+              any("requires a 'script' path" in e for e in errs))
+        errs, _ = L.lint_flow({"name": "s", "type": "robot"}, source="t")
+        check("lint rejects unknown flow type", any("type 'robot'" in e for e in errs))
+
     print(f"\n{PASS} checks passed, {len(FAILS)} failed.")
     return 1 if FAILS else 0
 

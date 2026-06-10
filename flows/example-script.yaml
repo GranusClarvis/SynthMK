@@ -1,0 +1,17 @@
+# Script flow (template) — the full-Playwright code path for journeys the
+# declarative YAML can't express (conditionals, loops, computed values).
+#
+# Script flows are TRUST-GATED: the node must set SYNTHMK_ALLOW_SCRIPTS=1 or
+# every script flow reports UNKNOWN. Enable it only on nodes where everyone
+# who can write to the flows volume is trusted to run code as the runner user.
+#
+# The script gets the raw Playwright page plus a SynthMK api object:
+# api.step()/api.secret()/api.totp()/api.var()/api.screenshot()/api.fail() —
+# see flows/scripts/example_journey.py.
+name: Synthetic Scripted Journey (template)
+type: script
+script: scripts/example_journey.py
+timeout_ms: 30000
+warn_ms: 8000
+crit_ms: 20000
+screenshot_on_failure: true
