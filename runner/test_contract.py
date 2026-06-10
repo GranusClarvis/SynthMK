@@ -812,6 +812,70 @@ def main() -> int:
             check("script escaping the flow dir is refused", "escapes" in str(fe))
         os.environ.pop("SYNTHMK_ALLOW_SCRIPTS", None)
 
+    print("== screenshot credential hardening ==")
+    # A capture-aware fake page that records which mask JS (if any) ran before
+    # the screenshot was taken, so we can assert masking without a real browser.
+    class MaskPage(FakePage):
+        def __init__(self):
+            super().__init__()
+            self.evaluated = []
+            self.shot_taken = False
+
+        def evaluate(self, js):
+            self.evaluated.append(js)
+
+        def screenshot(self, path=None, full_page=False):
+            # Masking must happen BEFORE the pixels are read.
+            self.shot_taken = True
+            self._masked_at_shot = list(self.evaluated)
+            Path(path).write_bytes(b"PNG")
+
+    # 1) No declared secret, but a password field exists: password mask still
+    #    runs. This is the "author forgot `sensitive: true`" leak we close.
+    with _tf.TemporaryDirectory() as _sd:
+        mp = MaskPage()
+        ctx = {"shot_dir": _sd, "flow_stem": "login"}
+        R._mask_before_shot(mp, ctx)
+        mp.screenshot(path=str(Path(_sd) / "x.png"))
+        check("password mask runs even without sensitive flag",
+              R._MASK_PASSWORDS_JS in mp._masked_at_shot
+              and R._MASK_INPUTS_JS not in mp._masked_at_shot)
+
+    # 2) Once a declared secret was used, every input/textarea is blanked.
+    mp2 = MaskPage()
+    R._mask_before_shot(mp2, {"sensitive_used": True})
+    check("all-inputs mask runs after a sensitive fill",
+          R._MASK_INPUTS_JS in mp2.evaluated)
+
+    # 3) Failure capture path masks before taking the PNG (ordering matters).
+    with _tf.TemporaryDirectory() as _sd:
+        mp3 = MaskPage()
+        out = R._capture_screenshot(mp3, {"shot_dir": _sd, "flow_stem": "f"}, "fail")
+        check("failure capture masks before screenshot",
+              mp3.shot_taken and R._MASK_PASSWORDS_JS in mp3._masked_at_shot
+              and out and Path(out).is_file())
+
+    # 4) Masking never breaks a capture: a page whose evaluate() throws still
+    #    produces the screenshot (mask is best-effort, capture is the goal).
+    class ThrowMaskPage(MaskPage):
+        def evaluate(self, js):
+            raise RuntimeError("CSP blocked eval")
+    with _tf.TemporaryDirectory() as _sd:
+        out = R._capture_screenshot(ThrowMaskPage(),
+                                    {"shot_dir": _sd, "flow_stem": "f"}, "fail")
+        check("mask failure does not abort capture", bool(out) and Path(out).is_file())
+
+    # 5) _flow_has_sensitive drives whether a served trace.zip keeps rich
+    #    snapshots: sensitive flows must not, so the trace can't embed creds.
+    check("declarative flow with sensitive fill is detected",
+          R._flow_has_sensitive({"steps": [
+              {"action": "fill", "selector": "#pw", "value": "x", "sensitive": True}]}))
+    check("plain declarative flow is not sensitive",
+          not R._flow_has_sensitive({"steps": [
+              {"action": "fill", "selector": "#q", "value": "hello"}]}))
+    check("script flow is always treated as sensitive",
+          R._flow_has_sensitive({"type": "script", "script": "j.py"}))
+
     print(f"\n{PASS} checks passed, {len(FAILS)} failed.")
     return 1 if FAILS else 0
 
