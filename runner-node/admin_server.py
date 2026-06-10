@@ -180,7 +180,8 @@ def lint_flow_text(text: str) -> tuple[bool, str]:
         tmp = tf.name
     try:
         proc = subprocess.run(
-            [sys.executable, str(HOME / "runner" / "flow_lint.py"), tmp],
+            [sys.executable, str(HOME / "runner" / "flow_lint.py"),
+             "--base-dir", str(FLOWS_DIR), tmp],
             capture_output=True, text=True, timeout=30)
         return proc.returncode == 0, proc.stdout.replace(tmp, "<flow>")
     finally:

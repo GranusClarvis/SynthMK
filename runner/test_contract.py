@@ -357,6 +357,201 @@ def main() -> int:
     ]}, source="t")
     check("sensitive secret fill is quiet", not any("sensitive" in w for w in warns))
 
+    print("== v0.5.0: selector fallback ladders ==")
+    check("string selector -> single candidate",
+          R._selector_candidates("#login") == ["#login"])
+    check("list selector -> ordered candidates",
+          R._selector_candidates(["[data-testid=go]", "#go", ""]) == ["[data-testid=go]", "#go"])
+
+    class LadderPage(FakePage):
+        """locator(sel) matches only the selectors in `present`."""
+        def __init__(self, present):
+            super().__init__()
+            self._present = set(present)
+        def locator(self, sel):
+            return FakeLocator([FakeMatch()] if sel in self._present else [])
+        def wait_for_timeout(self, ms):
+            pass
+
+    chosen = R._resolve_selector(LadderPage({"#go"}), ["[data-testid=go]", "#go"], 200)
+    check("ladder falls back to the first matching candidate", chosen == "#go")
+    chosen = R._resolve_selector(LadderPage({"[data-testid=go]", "#go"}),
+                                 ["[data-testid=go]", "#go"], 200)
+    check("ladder prefers the earlier candidate", chosen == "[data-testid=go]")
+    try:
+        R._resolve_selector(LadderPage(set()), ["#a", "#b"], 0)
+        check("exhausted ladder raises", False)
+    except R.FlowError as fe:
+        check("exhausted ladder raises", "candidates" in str(fe))
+
+    errs, _ = L.lint_flow({"steps": [
+        {"action": "click", "selector": ["[data-testid=go]", "#go"]},
+        {"action": "open_url", "url": "x"},
+    ]}, source="t")
+    check("lint accepts a selector ladder", errs == [])
+    errs, _ = L.lint_flow({"steps": [{"action": "click", "selector": []}]}, source="t")
+    check("lint rejects an empty ladder", any("missing required key" in e for e in errs))
+    errs, _ = L.lint_flow({"steps": [{"action": "click", "selector": ["#a", 7]}]}, source="t")
+    check("lint rejects non-string ladder entries", any("non-empty strings" in e for e in errs))
+
+    print("== v0.5.0: new assertions ==")
+    page = FakePage()  # visible: "Welcome to SynthMK", "Account Overview"
+    try:
+        R._run_step(page, {"action": "check_text_absent", "text": "Error 500"}, 50, {})
+        check("absent text passes check_text_absent", True)
+    except R.FlowError:
+        check("absent text passes check_text_absent", False)
+    try:
+        R._run_step(page, {"action": "check_text_absent", "text": "Welcome to SynthMK"}, 50, {})
+        check("present text fails check_text_absent", False)
+    except R.FlowError as fe:
+        check("present text fails check_text_absent", "expected absent" in str(fe))
+
+    class AttrPage(FakePage):
+        class _First:
+            def __init__(self, attrs, checked=False):
+                self._attrs, self._checked = attrs, checked
+            def get_attribute(self, name):
+                return self._attrs.get(name)
+            def is_checked(self):
+                return self._checked
+        def __init__(self, attrs=None, checked=False):
+            super().__init__()
+            self.first = AttrPage._First(attrs or {}, checked)
+        def locator(self, sel):
+            loc = FakeLocator([FakeMatch()])
+            loc.first = self.first
+            return loc
+
+    apage = AttrPage({"href": "/account/settings", "class": "btn primary"})
+    try:
+        R._run_step(apage, {"action": "check_element_attribute", "selector": "#x",
+                            "attribute": "href", "contains": "/account/"}, 50, {})
+        check("attribute contains passes", True)
+    except R.FlowError:
+        check("attribute contains passes", False)
+    try:
+        R._run_step(apage, {"action": "check_element_attribute", "selector": "#x",
+                            "attribute": "href", "equals": "/nope"}, 50, {})
+        check("attribute equals mismatch fails", False)
+    except R.FlowError as fe:
+        check("attribute equals mismatch fails", "expected" in str(fe))
+    try:
+        R._run_step(apage, {"action": "check_element_attribute", "selector": "#x",
+                            "attribute": "data-missing"}, 50, {})
+        check("missing attribute fails", False)
+    except R.FlowError as fe:
+        check("missing attribute fails", "no attribute" in str(fe))
+
+    try:
+        R._run_step(AttrPage(checked=True), {"action": "check_checkbox",
+                                             "selector": "#agree"}, 50, {})
+        check("checked checkbox passes (default expected=checked)", True)
+    except R.FlowError:
+        check("checked checkbox passes (default expected=checked)", False)
+    try:
+        R._run_step(AttrPage(checked=False), {"action": "check_checkbox",
+                                              "selector": "#agree", "checked": True}, 50, {})
+        check("unchecked checkbox fails when checked expected", False)
+    except R.FlowError as fe:
+        check("unchecked checkbox fails when checked expected", "unchecked" in str(fe))
+
+    print("== v0.5.0: TOTP + builtin variables ==")
+    # RFC 6238 appendix B vector: ASCII secret '12345678901234567890', T=59s,
+    # SHA-1, 8 digits -> 94287082 (so 6 digits -> 287082).
+    rfc_seed_b32 = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+    check("RFC 6238 test vector (t=59)",
+          S.totp_code(rfc_seed_b32, now=59) == "287082")
+    check("TOTP code is 6 digits",
+          len(S.totp_code(rfc_seed_b32)) == 6 and S.totp_code(rfc_seed_b32).isdigit())
+    try:
+        S.totp_code("not-base32!!!")
+        check("invalid base32 TOTP seed raises", False)
+    except S.SecretError:
+        check("invalid base32 TOTP seed raises", True)
+    code = S.substitute("{{ totp.mfa_seed }}", {"mfa_seed": rfc_seed_b32})
+    check("{{ totp.X }} resolves via the secrets file", len(code) == 6 and code.isdigit())
+    check("TOTP seed itself is registered for redaction",
+          S.redact(f"boom {rfc_seed_b32} boom") == "boom *** boom")
+    try:
+        S.substitute("{{ totp.mfa_seed }}", {"mfa_seed": "!!!"})
+        check("non-base32 totp secret raises with name", False)
+    except S.SecretError as e:
+        check("non-base32 totp secret raises with name",
+              "mfa_seed" in str(e) and "!!!" not in str(e))
+
+    S.reset()
+    u1 = S.substitute("{{ var.uuid }}", None)
+    u2 = S.substitute("user-{{ var.uuid }}@test", None)
+    check("var.uuid is stable within a run", u1 in u2 and len(u1) == 36)
+    check("var.timestamp is epoch seconds",
+          S.substitute("{{ var.timestamp }}", None).isdigit())
+    check("var.random is 12 chars", len(S.substitute("{{ var.random }}", None)) == 12)
+    try:
+        S.substitute("{{ var.nope }}", None)
+        check("unknown builtin var raises", False)
+    except S.SecretError as e:
+        check("unknown builtin var raises", "var.nope" in str(e))
+    S.reset()
+
+    print("== v0.5.0: include sub-flows ==")
+    with _tf.TemporaryDirectory() as td:
+        tdp = Path(td)
+        (tdp / "shared").mkdir()
+        (tdp / "shared" / "login.yaml").write_text(
+            "name: shared login\nsteps:\n"
+            "  - action: fill\n    selector: '#user'\n    value: bot\n"
+            "  - action: click\n    selector: '#go'\n")
+        (tdp / "main.yaml").write_text(
+            "name: Main\nsteps:\n"
+            "  - action: open_url\n    url: https://x\n"
+            "  - action: include\n    flow: shared/login.yaml\n"
+            "  - action: check_title\n    contains: Dash\n")
+        flow = R.load_flow(tdp / "main.yaml")
+        actions = [s["action"] for s in flow["steps"]]
+        check("include splices the shared steps in place",
+              actions == ["open_url", "fill", "click", "check_title"])
+
+        (tdp / "a.yaml").write_text(
+            "steps:\n  - action: include\n    flow: b.yaml\n")
+        (tdp / "b.yaml").write_text(
+            "steps:\n  - action: include\n    flow: a.yaml\n")
+        try:
+            R.load_flow(tdp / "a.yaml")
+            check("include cycle raises UNKNOWN", False)
+        except R.FlowError as fe:
+            check("include cycle raises UNKNOWN",
+                  fe.status == R.UNKNOWN and "cycle" in str(fe))
+
+        (tdp / "miss.yaml").write_text(
+            "steps:\n  - action: include\n    flow: nope.yaml\n")
+        try:
+            R.load_flow(tdp / "miss.yaml")
+            check("missing include raises UNKNOWN", False)
+        except R.FlowError as fe:
+            check("missing include raises UNKNOWN", fe.status == R.UNKNOWN)
+
+        errs, _ = L.lint_flow(
+            {"name": "m", "steps": [{"action": "include", "flow": "shared/login.yaml"}]},
+            source="t", base_dir=tdp)
+        check("lint follows a resolvable include", errs == [])
+        errs, _ = L.lint_flow(
+            {"name": "m", "steps": [{"action": "include", "flow": "nope.yaml"}]},
+            source="t", base_dir=tdp)
+        check("lint flags a missing include target",
+              any("file not found" in e for e in errs))
+        (tdp / "bad.yaml").write_text(
+            "steps:\n  - action: clikc\n    selector: '#x'\n")
+        errs, _ = L.lint_flow(
+            {"name": "m", "steps": [{"action": "include", "flow": "bad.yaml"}]},
+            source="t", base_dir=tdp)
+        check("lint surfaces errors inside the included file",
+              any("unknown action" in e for e in errs))
+        errs, _ = L.lint_flow(
+            {"name": "m", "steps": [{"action": "include", "flow": "shared/login.yaml"}]},
+            source="t")
+        check("lint without base_dir does not follow includes", errs == [])
+
     print(f"\n{PASS} checks passed, {len(FAILS)} failed.")
     return 1 if FAILS else 0
 

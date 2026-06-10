@@ -55,9 +55,12 @@ def _oneline(text: str, limit: int = 240) -> str:
 # Actions that perform an interaction vs. assert a condition.
 ASSERT_ACTIONS = {
     "check_visible_text",
+    "check_text_absent",
     "check_title",
     "check_url",
     "check_element_count",
+    "check_element_attribute",
+    "check_checkbox",
     "wait_for_element",
     "wait_for_url",
 }
@@ -193,7 +196,75 @@ def load_flow(path: Path) -> dict[str, Any]:
         raise FlowError(f"Flow file {path} did not parse to a mapping", UNKNOWN)
     if "steps" not in data or not isinstance(data["steps"], list):
         raise FlowError(f"Flow file {path} missing a 'steps' list", UNKNOWN)
+    data["steps"] = expand_includes(data["steps"], path.parent)
     return data
+
+
+# Sub-flow inclusion (`action: include, flow: shared/login.yaml`): reuse one
+# journey fragment (typically a login) across many flows instead of copying
+# steps. Bounded so a typo can never make the runner read files forever.
+MAX_INCLUDE_DEPTH = 3
+MAX_EXPANDED_STEPS = 200
+
+
+def expand_includes(steps: list, base_dir: Path,
+                    _stack: tuple[str, ...] = ()) -> list:
+    out: list = []
+    for step in steps:
+        if not (isinstance(step, dict) and step.get("action") == "include"):
+            out.append(step)
+            continue
+        ref = str(step.get("flow", "")).strip()
+        if not ref:
+            raise FlowError("include step missing 'flow'", UNKNOWN)
+        if Path(ref).is_absolute():
+            raise FlowError(f"include path must be relative: {ref}", UNKNOWN)
+        target = (base_dir / ref).resolve()
+        if str(target) in _stack:
+            raise FlowError(f"include cycle via {ref}", UNKNOWN)
+        if len(_stack) >= MAX_INCLUDE_DEPTH:
+            raise FlowError(f"include nesting deeper than {MAX_INCLUDE_DEPTH} ({ref})", UNKNOWN)
+        try:
+            data = yaml.safe_load(target.read_text())
+        except FileNotFoundError:
+            raise FlowError(f"include not found: {ref}", UNKNOWN)
+        except yaml.YAMLError:
+            raise FlowError(f"include is not valid YAML: {ref}", UNKNOWN)
+        sub = data.get("steps") if isinstance(data, dict) else None
+        if not isinstance(sub, list) or not sub:
+            raise FlowError(f"include {ref} has no 'steps' list", UNKNOWN)
+        out.extend(expand_includes(sub, target.parent, _stack + (str(target),)))
+    if len(out) > MAX_EXPANDED_STEPS:
+        raise FlowError(f"flow expands to more than {MAX_EXPANDED_STEPS} steps", UNKNOWN)
+    return out
+
+
+def _selector_candidates(spec: Any) -> list[str]:
+    """A step `selector:` is one selector or a fallback ladder (list, tried in
+    order). Multi-locator redundancy is the single best anti-flake measure:
+    a page redesign that breaks the CSS path still matches the data-testid."""
+    if isinstance(spec, list):
+        return [str(s) for s in spec if str(s).strip()]
+    return [str(spec)]
+
+
+def _resolve_selector(page, spec: Any, timeout: int) -> str:
+    cands = _selector_candidates(spec)
+    if len(cands) == 1:
+        return cands[0]
+    deadline = time.monotonic() + timeout / 1000.0
+    while True:
+        for cand in cands:
+            try:
+                if page.locator(cand).count() > 0:
+                    return cand
+            except Exception:
+                continue  # one invalid candidate must not kill the ladder
+        if time.monotonic() >= deadline:
+            raise FlowError(
+                f"None of {len(cands)} selector candidates matched: {cands}"
+            )
+        page.wait_for_timeout(150)
 
 
 # Flow `browser:` value -> (Playwright engine attribute, optional channel).
@@ -229,7 +300,7 @@ def _run_step(page, step: dict[str, Any], default_timeout: int, ctx: dict[str, A
         url = _substitute(step["url"])
         page.goto(url, timeout=timeout, wait_until="domcontentloaded")
     elif action == "click":
-        page.click(step["selector"], timeout=timeout)
+        page.click(_resolve_selector(page, step["selector"], timeout), timeout=timeout)
     elif action == "fill":
         value = _substitute(str(step.get("value", "")))
         # A sensitive fill (passwords, tokens) is never echoed anywhere and
@@ -237,17 +308,18 @@ def _run_step(page, step: dict[str, Any], default_timeout: int, ctx: dict[str, A
         if step.get("sensitive"):
             secret_source.register_sensitive(value)
             ctx["sensitive_used"] = True
-        page.fill(step["selector"], value, timeout=timeout)
+        page.fill(_resolve_selector(page, step["selector"], timeout), value, timeout=timeout)
     elif action == "press":
         # Key press, optionally scoped to a selector (else the focused element).
         key = str(step["key"])
         if step.get("selector"):
-            page.press(step["selector"], key, timeout=timeout)
+            page.press(_resolve_selector(page, step["selector"], timeout), key, timeout=timeout)
         else:
             page.keyboard.press(key)
     elif action == "select_option":
         # Match by value first; fall back to visible label for recorder output.
-        sel, value = step["selector"], _substitute(str(step.get("value", "")))
+        sel = _resolve_selector(page, step["selector"], timeout)
+        value = _substitute(str(step.get("value", "")))
         try:
             page.select_option(sel, value=value, timeout=timeout)
         except Exception:
@@ -256,9 +328,10 @@ def _run_step(page, step: dict[str, Any], default_timeout: int, ctx: dict[str, A
             except Exception:
                 raise FlowError(f"Could not select option '{value}' in '{sel}'")
     elif action == "hover":
-        page.hover(step["selector"], timeout=timeout)
+        page.hover(_resolve_selector(page, step["selector"], timeout), timeout=timeout)
     elif action == "scroll_into_view":
-        page.locator(step["selector"]).first.scroll_into_view_if_needed(timeout=timeout)
+        sel = _resolve_selector(page, step["selector"], timeout)
+        page.locator(sel).first.scroll_into_view_if_needed(timeout=timeout)
     elif action == "wait_ms":
         page.wait_for_timeout(int(step["ms"]))
     elif action == "wait_for_network_idle":
@@ -291,10 +364,11 @@ def _run_step(page, step: dict[str, Any], default_timeout: int, ctx: dict[str, A
                 if not step.get("optional", True):
                     raise FlowError(f"Screenshot capture failed: {exc}")
     elif action == "wait_for_element":
+        sel = _resolve_selector(page, step["selector"], timeout)
         try:
-            page.wait_for_selector(step["selector"], timeout=timeout, state="visible")
+            page.wait_for_selector(sel, timeout=timeout, state="visible")
         except Exception:
-            raise FlowError(f"Element '{step['selector']}' not found within {timeout}ms")
+            raise FlowError(f"Element '{sel}' not found within {timeout}ms")
     elif action == "wait_for_url":
         contains = step["contains"]
         try:
@@ -322,13 +396,55 @@ def _run_step(page, step: dict[str, Any], default_timeout: int, ctx: dict[str, A
         if contains not in url:
             raise FlowError(f"Expected URL to contain '{contains}', got '{url}'")
     elif action == "check_element_count":
-        sel = step["selector"]
         minimum = int(step.get("min", 1))
-        count = page.locator(sel).count()
+        # With a fallback ladder every candidate addresses the same element(s);
+        # the best (max) count across candidates is the honest answer.
+        count = 0
+        for cand in _selector_candidates(step["selector"]):
+            try:
+                count = max(count, page.locator(cand).count())
+            except Exception:
+                continue
         if count < minimum:
+            sel = step["selector"]
             raise FlowError(
                 f"Expected at least {minimum} element(s) matching '{sel}', found {count}"
             )
+    elif action == "check_text_absent":
+        text = step["text"]
+        loc = page.get_by_text(text)
+        n = loc.count()
+        if n and any(loc.nth(i).is_visible() for i in range(n)):
+            raise FlowError(f"Text '{text}' is visible on the page (expected absent)")
+    elif action == "check_element_attribute":
+        sel = _resolve_selector(page, step["selector"], timeout)
+        attr = str(step["attribute"])
+        value = page.locator(sel).first.get_attribute(attr)
+        if value is None:
+            raise FlowError(f"Element '{sel}' has no attribute '{attr}'")
+        if "equals" in step and str(step["equals"]) != value:
+            raise FlowError(
+                f"Attribute '{attr}' of '{sel}' is '{value}' (expected '{step['equals']}')"
+            )
+        if "contains" in step and str(step["contains"]) not in value:
+            raise FlowError(
+                f"Attribute '{attr}' of '{sel}' is '{value}' "
+                f"(expected to contain '{step['contains']}')"
+            )
+    elif action == "check_checkbox":
+        sel = _resolve_selector(page, step["selector"], timeout)
+        want = bool(step.get("checked", True))
+        got = bool(page.locator(sel).first.is_checked())
+        if got != want:
+            raise FlowError(
+                f"Checkbox '{sel}' is {'checked' if got else 'unchecked'} "
+                f"(expected {'checked' if want else 'unchecked'})"
+            )
+    elif action == "include":
+        # Includes are spliced by expand_includes() at load time; reaching the
+        # dispatcher means the flow bypassed load_flow (a runner bug, not a
+        # site failure).
+        raise FlowError("include step was not expanded at load time", UNKNOWN)
     else:
         raise FlowError(f"Unknown action '{action}'", UNKNOWN)
 

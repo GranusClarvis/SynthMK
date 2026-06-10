@@ -48,9 +48,16 @@ except ImportError:  # pragma: no cover - dependency guard
 
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([^}]+?)\s*\}\}")
 SECRET_PREFIX = "secret."
+TOTP_PREFIX = "totp."
+VAR_PREFIX = "var."
 
 # Values resolved from the secrets file during this process, for redaction.
 _RESOLVED: set[str] = set()
+
+# Builtin {{ var.* }} values, generated once per process so the same variable
+# resolves identically across steps (type an email with var.uuid, then assert
+# the page echoes the same uuid).
+_VARS: dict[str, str] = {}
 
 MASK = "***"
 
@@ -104,24 +111,86 @@ def load_secrets(path: Path) -> dict[str, str]:
     return secrets
 
 
+def totp_code(secret_b32: str, *, period: int = 30, digits: int = 6,
+              now: float | None = None) -> str:
+    """RFC 6238 TOTP from a base32 secret (the standard authenticator format).
+
+    Stdlib-only on purpose: MFA-protected logins are an enterprise requirement
+    and must not pull in a dependency the appliance image doesn't ship.
+    """
+    import base64
+    import hashlib
+    import hmac as hmac_mod
+    import struct
+    import time as time_mod
+
+    cleaned = re.sub(r"[\s-]+", "", secret_b32).upper()
+    try:
+        key = base64.b32decode(cleaned + "=" * (-len(cleaned) % 8))
+    except Exception:
+        raise SecretError("TOTP secret is not valid base32")
+    counter = int((time_mod.time() if now is None else now) // period)
+    digest = hmac_mod.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    code = (struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF) % (10 ** digits)
+    return str(code).zfill(digits)
+
+
+def _builtin_var(name: str) -> str:
+    """Resolve a {{ var.* }} builtin; values are stable for the process."""
+    if name in _VARS:
+        return _VARS[name]
+    if name == "uuid":
+        import uuid as uuid_mod
+        value = str(uuid_mod.uuid4())
+    elif name == "timestamp":
+        import time as time_mod
+        value = str(int(time_mod.time()))
+    elif name == "random":
+        import secrets as pysecrets
+        import string
+        value = "".join(pysecrets.choice(string.ascii_lowercase + string.digits)
+                        for _ in range(12))
+    else:
+        raise SecretError(
+            f"unknown builtin variable 'var.{name}' (known: uuid, timestamp, random)"
+        )
+    _VARS[name] = value
+    return value
+
+
 def substitute(value: str, secrets: dict[str, str] | None) -> str:
-    """Resolve {{ secret.NAME }} (secrets file) and {{ NAME }} (env) refs."""
+    """Resolve {{ secret.NAME }} / {{ totp.NAME }} / {{ var.NAME }} / {{ NAME }}."""
+
+    def _secret(key: str) -> str:
+        if secrets is None:
+            raise SecretError(
+                f"flow references {{{{ secret.{key} }}}} but no secrets file is "
+                f"configured (set SYNTHMK_SECRETS_FILE or --secrets-file)"
+            )
+        if key not in secrets:
+            raise SecretError(f"secret '{key}' not found in secrets file")
+        resolved = secrets[key]
+        if resolved:
+            _RESOLVED.add(resolved)
+        return resolved
 
     def repl(match: re.Match) -> str:
         name = match.group(1).strip()
         if name.startswith(SECRET_PREFIX):
-            key = name[len(SECRET_PREFIX):].strip()
-            if secrets is None:
-                raise SecretError(
-                    f"flow references {{{{ secret.{key} }}}} but no secrets file is "
-                    f"configured (set SYNTHMK_SECRETS_FILE or --secrets-file)"
-                )
-            if key not in secrets:
-                raise SecretError(f"secret '{key}' not found in secrets file")
-            resolved = secrets[key]
-            if resolved:
-                _RESOLVED.add(resolved)
-            return resolved
+            return _secret(name[len(SECRET_PREFIX):].strip())
+        if name.startswith(TOTP_PREFIX):
+            # The shared TOTP seed lives in the secrets file like any credential;
+            # the 6-digit code it derives expires in seconds and is not redacted
+            # (a 6-digit mask would false-positive on timings in output).
+            key = name[len(TOTP_PREFIX):].strip()
+            seed = _secret(key)
+            try:
+                return totp_code(seed)
+            except SecretError:
+                raise SecretError(f"secret '{key}' is not a valid base32 TOTP secret")
+        if name.startswith(VAR_PREFIX):
+            return _builtin_var(name[len(VAR_PREFIX):].strip())
         return os.environ.get(name, "")
 
     return PLACEHOLDER_RE.sub(repl, value)
@@ -155,5 +224,6 @@ def redact(text: str) -> str:
 
 
 def reset() -> None:
-    """Test hook: clear the redaction registry."""
+    """Test hook: clear the redaction registry and the builtin-var cache."""
     _RESOLVED.clear()
+    _VARS.clear()

@@ -1,0 +1,27 @@
+# Shared sub-flow: a reusable login fragment.
+# Other flows splice these steps with:
+#
+#   - action: include
+#     flow: shared/portal-login.yaml
+#
+# Only `steps:` is used by the including flow; keep fragments small and
+# single-purpose (log in, accept a consent banner, open a menu).
+name: shared portal login (fragment)
+steps:
+  - action: fill
+    selector:
+      - "[data-testid=username]"
+      - "input[name=username]"
+      - "#user"
+    value: "{{ secret.portal_user }}"
+    sensitive: true
+  - action: fill
+    selector:
+      - "[data-testid=password]"
+      - "input[type=password]"
+    value: "{{ secret.portal_password }}"
+    sensitive: true
+  - action: click
+    selector:
+      - "[data-testid=login-submit]"
+      - "button[type=submit]"

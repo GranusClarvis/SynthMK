@@ -54,9 +54,20 @@ REQUIRED_KEYS: dict[str, tuple[str, ...]] = {
     "wait_for_element": ("selector",),
     "wait_for_url": ("contains",),
     "check_visible_text": ("text",),
+    "check_text_absent": ("text",),
     "check_title": ("contains",),
     "check_url": ("contains",),
     "check_element_count": ("selector",),  # min is optional (defaults to 1)
+    "check_element_attribute": ("selector", "attribute"),
+    "check_checkbox": ("selector",),       # checked: true|false (default true)
+    "include": ("flow",),                  # splice another flow's steps here
+}
+
+# Actions whose `selector` may be a fallback ladder (list tried in order).
+SELECTOR_ACTIONS = {
+    "click", "fill", "press", "select_option", "hover", "scroll_into_view",
+    "wait_for_element", "check_element_count", "check_element_attribute",
+    "check_checkbox",
 }
 
 # Keys a step may legally carry in addition to its required ones.
@@ -70,6 +81,8 @@ ACTION_OPTIONAL_KEYS: dict[str, set[str]] = {
     "press": {"selector"},
     "select_option": {"value"},
     "check_element_count": {"min"},
+    "check_element_attribute": {"contains", "equals"},
+    "check_checkbox": {"checked"},
     "screenshot": {"name", "full_page"},
 }
 
@@ -93,8 +106,15 @@ KNOWN_BROWSERS = {
 }
 
 
-def lint_flow(data: Any, *, source: str = "<flow>") -> tuple[list[str], list[str]]:
-    """Return (errors, warnings) for an already-parsed flow mapping."""
+def lint_flow(data: Any, *, source: str = "<flow>",
+              base_dir: Path | None = None,
+              _stack: tuple[str, ...] = ()) -> tuple[list[str], list[str]]:
+    """Return (errors, warnings) for an already-parsed flow mapping.
+
+    base_dir resolves `include:` references (usually the flow file's directory;
+    pass --base-dir when linting text that will be saved elsewhere, e.g. the
+    node dashboard editor). Without it, include targets are not followed.
+    """
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -160,13 +180,32 @@ def lint_flow(data: Any, *, source: str = "<flow>") -> tuple[list[str], list[str
             errors.append(f"{where}: unknown action '{action}' (known: {known})")
             continue
         for req in REQUIRED_KEYS[action]:
-            if req not in step or step[req] in (None, ""):
+            if req not in step or step[req] in (None, "") or step[req] == []:
                 errors.append(f"{where} ('{action}'): missing required key '{req}'")
         allowed = (OPTIONAL_STEP_KEYS | set(REQUIRED_KEYS[action])
                    | ACTION_OPTIONAL_KEYS.get(action, set()))
         for key in step:
             if key not in allowed:
                 warnings.append(f"{where} ('{action}'): unexpected key '{key}'")
+        # Selector fallback ladders: a list of selectors tried in order.
+        sel = step.get("selector")
+        if isinstance(sel, list):
+            if action not in SELECTOR_ACTIONS:
+                errors.append(f"{where} ('{action}'): selector cannot be a list here")
+            elif any(not isinstance(c, str) or not c.strip() for c in sel):
+                errors.append(
+                    f"{where} ('{action}'): selector ladder entries must be "
+                    f"non-empty strings"
+                )
+        if action == "include":
+            if step.get("optional"):
+                warnings.append(
+                    f"{where} ('include'): 'optional' has no effect on include "
+                    f"(mark the included steps optional instead)"
+                )
+            ref = str(step.get("flow", "")).strip()
+            if ref and base_dir is not None:
+                _lint_include(ref, base_dir, where, _stack, errors, warnings)
         # Credential hygiene: a fill that references {{ secret.X }} should be
         # marked sensitive so failure screenshots mask form fields.
         if action == "fill" and not step.get("sensitive"):
@@ -180,7 +219,41 @@ def lint_flow(data: Any, *, source: str = "<flow>") -> tuple[list[str], list[str
     return (errors, warnings)
 
 
-def lint_path(path: Path) -> int:
+def _lint_include(ref: str, base_dir: Path, where: str,
+                  stack: tuple[str, ...],
+                  errors: list[str], warnings: list[str]) -> None:
+    """Follow an include reference: the target must exist, parse, and lint."""
+    if Path(ref).is_absolute():
+        errors.append(f"{where} ('include'): path must be relative: {ref}")
+        return
+    target = (base_dir / ref).resolve()
+    if str(target) in stack:
+        errors.append(f"{where} ('include'): cycle via '{ref}'")
+        return
+    if len(stack) >= 3:
+        errors.append(f"{where} ('include'): nesting deeper than 3 levels")
+        return
+    if not target.is_file():
+        errors.append(f"{where} ('include'): file not found: {ref}")
+        return
+    try:
+        sub = yaml.safe_load(target.read_text())
+    except yaml.YAMLError:
+        errors.append(f"{where} ('include'): '{ref}' is not valid YAML")
+        return
+    if not isinstance(sub, dict) or not isinstance(sub.get("steps"), list) or not sub["steps"]:
+        errors.append(f"{where} ('include'): '{ref}' has no 'steps' list")
+        return
+    sub_errs, sub_warns = lint_flow(
+        {"name": "(included)", "steps": sub["steps"]},
+        source=f"{where} -> {ref}", base_dir=target.parent,
+        _stack=stack + (str(target),),
+    )
+    errors.extend(sub_errs)
+    warnings.extend(sub_warns)
+
+
+def lint_path(path: Path, base_dir: Path | None = None) -> int:
     """Lint a single flow file; print results; return an exit-code class."""
     if not path.exists():
         print(f"  FAIL - {path}: file not found")
@@ -191,7 +264,8 @@ def lint_path(path: Path) -> int:
         print(f"  FAIL - {path}: invalid YAML: {' '.join(str(exc).split())}")
         return 3
 
-    errors, warnings = lint_flow(data, source=str(path))
+    errors, warnings = lint_flow(data, source=str(path),
+                                 base_dir=base_dir or path.parent)
     for w in warnings:
         print(f"  warn - {w}")
     for e in errors:
@@ -204,12 +278,21 @@ def lint_path(path: Path) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
+    base_dir: Path | None = None
+    if "--base-dir" in args:
+        i = args.index("--base-dir")
+        try:
+            base_dir = Path(args[i + 1])
+        except IndexError:
+            sys.stderr.write("--base-dir needs a directory argument\n")
+            return 3
+        args = args[:i] + args[i + 2:]
     if not args:
-        sys.stderr.write("usage: flow_lint.py <flow.yaml> [flow.yaml ...]\n")
+        sys.stderr.write("usage: flow_lint.py [--base-dir DIR] <flow.yaml> [flow.yaml ...]\n")
         return 3
     worst = 0
     for arg in args:
-        rc = lint_path(Path(arg))
+        rc = lint_path(Path(arg), base_dir=base_dir)
         worst = max(worst, rc)
     return worst
 

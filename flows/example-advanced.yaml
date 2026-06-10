@@ -1,0 +1,43 @@
+# v0.5.0 feature tour — selector fallback ladders, sub-flow include, MFA TOTP,
+# builtin variables, and the expanded assertion set. A TEMPLATE to copy from,
+# not a runnable public check (it targets a fictional portal).
+#
+#   selector: [a, b, c]        each candidate is tried in order until one
+#                              matches — a page redesign that breaks the CSS
+#                              path still matches the data-testid (anti-flake)
+#   include: shared/x.yaml     splice a reusable fragment (shared login)
+#   {{ totp.mfa_seed }}        6-digit TOTP from a base32 seed in the secrets
+#                              file — monitors MFA-protected logins
+#   {{ var.uuid }}             per-run unique value (also: var.timestamp,
+#                              var.random) — type it, then assert it echoed
+name: Synthetic Portal Journey (template)
+timeout_ms: 30000
+warn_ms: 8000
+crit_ms: 20000
+screenshot_on_failure: true
+steps:
+  - action: open_url
+    url: https://portal.example.internal/login
+  - action: include
+    flow: shared/portal-login.yaml
+  - action: fill
+    selector: "#mfa-code"
+    value: "{{ totp.portal_mfa_seed }}"
+  - action: click
+    selector: "#mfa-submit"
+  - action: wait_for_url
+    contains: /dashboard
+  - action: check_text_absent
+    text: "Invalid credentials"
+  - action: check_element_attribute
+    selector: "#account-link"
+    attribute: href
+    contains: /account/
+  - action: check_checkbox
+    selector: "#remember-me"
+    checked: false
+  - action: fill
+    selector: "#search"
+    value: "ticket-{{ var.uuid }}"
+  - action: check_visible_text
+    text: Dashboard
