@@ -49,6 +49,14 @@ else
   bad "flow lint failed"; sed 's/^/    /' /tmp/synthmk_ci_lint.log
 fi
 
+# --- 1c. special-agent contract (multi-node pull) --------------------------
+section "special agent contract (multi-node /api/results pull)"
+if $PY checkmk/special/test_agent_synthmk.py >/tmp/synthmk_ci_special.log 2>&1; then
+  ok "special agent: two nodes -> one host, piggyback + plugin-parse"
+else
+  bad "special agent contract failed"; sed 's/^/    /' /tmp/synthmk_ci_special.log
+fi
+
 # --- 2. shell syntax -------------------------------------------------------
 section "shell syntax (bash -n + shellcheck)"
 have_shellcheck=0; command -v shellcheck >/dev/null 2>&1 && have_shellcheck=1

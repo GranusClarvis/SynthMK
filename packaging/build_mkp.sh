@@ -43,6 +43,14 @@ mkdir -p "$STAGE/local/lib/python3/cmk_addons/plugins/synthmk"
 rsync -a --exclude='__pycache__' --exclude='*.pyc' \
       "$REPO/checkmk/plugin/" "$STAGE/local/lib/python3/cmk_addons/plugins/synthmk/"
 
+# Multi-node special agent executable at the cmk_addons libexec path the
+# SpecialAgentConfig(name="synthmk") resolves to. Installed mode 0755 so the
+# Checkmk core can run it as a datasource program.
+mkdir -p "$STAGE/local/lib/python3/cmk_addons/plugins/synthmk/libexec"
+cp "$REPO/checkmk/special/agent_synthmk.py" \
+   "$STAGE/local/lib/python3/cmk_addons/plugins/synthmk/libexec/agent_synthmk"
+chmod 0755 "$STAGE/local/lib/python3/cmk_addons/plugins/synthmk/libexec/agent_synthmk"
+
 # Runtime payload the local-check invokes (SYNTHMK_HOME points here).
 for part in runner flows checkmk docs README.md VERSION; do
   src="$REPO/$part"

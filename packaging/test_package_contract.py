@@ -36,6 +36,9 @@ EXPECTED_FILES = [
     "local/lib/python3/cmk_addons/plugins/synthmk/agent_based/synthmk.py",
     "local/lib/python3/cmk_addons/plugins/synthmk/rulesets/synthmk.py",
     "local/lib/python3/cmk_addons/plugins/synthmk/graphing/synthmk.py",
+    "local/lib/python3/cmk_addons/plugins/synthmk/rulesets/special_agent_synthmk.py",
+    "local/lib/python3/cmk_addons/plugins/synthmk/server_side_calls/synthmk.py",
+    "local/lib/python3/cmk_addons/plugins/synthmk/libexec/agent_synthmk",
     "local/share/synthmk/runner/runner.py",
     "local/share/synthmk/runner/secret_source.py",
     "local/share/synthmk/runner/flow_lint.py",
@@ -47,7 +50,10 @@ EXPECTED_FILES = [
 ]
 
 # The agent local-check is invoked by the Checkmk agent and must be executable.
-EXEC_FILES = ["local/lib/check_mk_agent/local/300/synthmk_check.sh"]
+EXEC_FILES = [
+    "local/lib/check_mk_agent/local/300/synthmk_check.sh",
+    "local/lib/python3/cmk_addons/plugins/synthmk/libexec/agent_synthmk",
+]
 
 # Substrings that must never appear in any packaged path.
 FORBIDDEN_SUBSTRINGS = ["__pycache__", ".pyc", "/.git", "screenshots", "node_modules", ".env"]

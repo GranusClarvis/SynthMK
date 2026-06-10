@@ -7,6 +7,22 @@ All notable changes to SynthMK are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **Multi-node "locations" special agent** (`checkmk/special/agent_synthmk.py`,
+  `checkmk/plugin/{rulesets/special_agent_synthmk,server_side_calls/synthmk}.py`,
+  `runner-node/admin_server.py` `/api/results`): a Checkmk datasource program
+  that runs on the Checkmk server and *pulls* flow results from one or more
+  runner-node HTTP endpoints, so several runners on different network segments —
+  each reachable only from the server — feed **one** configured host. Each node
+  exposes a read-only `/api/results` feed (scoped `SYNTHMK_RESULTS_TOKEN` or the
+  admin token); the agent re-emits each node's native `<<<synthmk:sep(0)>>>`
+  section (the bundled check plugin is unchanged), piggybacking flows to their
+  `checkmk_host` and adding a `SynthMK Node <name>` connectivity service that
+  goes CRIT when a runner is unreachable. The agent always exits 0 so one dead
+  node can't blank the others. Setup GUI: "SynthMK runner nodes (multi-node
+  locations)". Ships in the MKP at the cmk_addons libexec path (mode 0755).
+  Test: `checkmk/special/test_agent_synthmk.py` (two fake nodes → one host,
+  piggyback routing, CRIT-on-unreachable, real-plugin parse) — wired into
+  `scripts/ci.sh` and `packaging/test_package_contract.py`.
 - **Multi-browser engine + expanded step vocabulary** (`runner/runner.py`,
   `runner/flow_lint.py`): the flow `browser:` field now selects the engine —
   `firefox`, `webkit`/`safari`, `edge`/`msedge` (Edge release channel, degrades
