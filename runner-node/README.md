@@ -31,6 +31,36 @@ unprivileged `pwuser`**, so a compromised page never executes as root. Chromium
 still runs `--no-sandbox` inside the container (standard for Chromium-in-Docker);
 treat flow targets as trusted.
 
+The shipped compose files harden the container surface beyond the user drop:
+
+| Control | Setting | Why |
+|---|---|---|
+| Capability floor | `cap_drop: [ALL]` + re-add only `CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID` | Exactly the caps the root→`pwuser` drop needs; everything else (`NET_RAW`, `NET_ADMIN`, `SYS_ADMIN`, `SYS_PTRACE`, …) is gone. **No `NET_RAW` ⇒ the node can't craft raw packets to port-scan the internal range.** |
+| Seccomp | Docker **default** profile retained (never `seccomp:unconfined`) | `--no-sandbox` Chromium does **not** need a relaxed profile, unlike Chromium's own sandbox — so the restrictive default stays on. |
+| No privilege gain | `security_opt: no-new-privileges:true` | setuid binaries can't re-escalate after the drop. |
+| Resource caps | `deploy.resources.limits` `cpus/memory/pids` (+ `--memory`/`--cpus`/`--pids-limit` on raw `docker run`) | A runaway browser pool can't exhaust the host; `pids` is a fork-bomb ceiling. |
+
+### Trust boundary — `flows/` + `flows.conf` are OPERATOR-ONLY inputs
+
+SynthMK has **no untrusted-flow-submission path**: flow files and `flows.conf`
+are placed on disk by the operator (bind-mounted `:ro` in production) and the
+dashboard's flow editor is itself token-gated to the admin. A flow can name any
+URL, so it can by design reach internal hosts and (with `SYNTHMK_ALLOW_SCRIPTS=1`)
+run Python as `pwuser` — i.e. **whoever can write a flow already holds the node's
+network position and `pwuser` code-exec.** That is acceptable *because the flow
+authors are trusted operators*. The consequences if that boundary is ignored:
+
+- **SSRF / internal scan:** a flow URL is fetched from inside the intranet
+  segment; never expose a flow-authoring path to untrusted users. (The admin
+  *builder's* one-off screenshot endpoint additionally carries an SSRF
+  blocklist for cloud-metadata/loopback — see `admin_server.py` — but scheduled
+  flows are trusted by contract, not blocklisted.)
+- **Code exec:** keep `SYNTHMK_ALLOW_SCRIPTS` unset unless every flow author may
+  run code as `pwuser`.
+
+Do **not** wire SynthMK behind a form that lets end users submit flows or
+`flows.conf` lines without operator review.
+
 ## Run it (production template)
 
 Use [`compose.yaml`](compose.yaml); it carries the hardened defaults (resource
@@ -48,7 +78,11 @@ Or raw `docker run`:
 docker build -f runner-node/Dockerfile -t synthmk-runner:$(cat VERSION) .
 docker run -d --name synthmk-runner \
   -p 6556:6556 -p 9180:9180 \
-  --memory 6g --cpus 4 --shm-size 1g --security-opt no-new-privileges \
+  --memory 6g --cpus 4 --pids-limit 1024 --shm-size 1g \
+  --security-opt no-new-privileges \
+  --cap-drop ALL \
+  --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \
+  --cap-add SETUID --cap-add SETGID \
   -v "$PWD/flows:/opt/synthmk/flows:ro" \
   -v "$PWD/runner-node/flows.conf:/opt/synthmk/runner-node/flows.conf:ro" \
   -v "$PWD/secrets.yaml:/run/synthmk/secrets.yaml:ro" \
@@ -118,9 +152,14 @@ and the service line links it via `SYNTHMK_SHOT_BASE_URL`, including the
 per-file access token. The link only renders if **"Escape HTML codes in service
 output"** is **Off** for the runner host; scope that rule to this host only
 (escaping-off is an XSS surface, Werk #6058; SynthMK output is always a single
-sanitized line). **Credential flows:** screenshots taken after a
-`sensitive: true` fill blank all form fields before capture; values from the
-secrets file are additionally redacted from service output.
+sanitized line). **Credential flows:** `input[type=password]` fields are blanked
+before **every** screenshot — even if the flow author never marked the fill
+`sensitive: true` — so a login PNG can't leak the password. After a declared
+secret is used (`sensitive: true` fill or `api.secret()`), all inputs/textareas
+are blanked, and the served `trace.zip` is recorded **without** DOM
+snapshots/screenshots (it would otherwise embed the credential DOM captured
+before the failure mask runs); values from the secrets file are additionally
+redacted from service output.
 
 ## Security summary
 
