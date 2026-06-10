@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SynthMK Recorder",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Record browser journeys (clicks, fills, assertions) and export SynthMK YAML synthetic checks for Checkmk. Passwords are exported as secret references — never recorded.",
   "icons": {
     "16": "icons/icon16.png",
